@@ -27,7 +27,12 @@ app.use('/api', apiLimiter);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.get('/health', (req, res) => res.json({ success: true, service: env.appName, status: 'ok', time: new Date().toISOString() }));
-
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'OffPay Backend is running',
+  });
+});
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/users', require('./routes/user.routes'));
 app.use('/api/wallet', require('./routes/wallet.routes'));
