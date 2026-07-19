@@ -347,8 +347,16 @@ CREATE TABLE IF NOT EXISTS banks (
   name      VARCHAR(150) NOT NULL,
   code      VARCHAR(20) NOT NULL,
   country   VARCHAR(60) NOT NULL DEFAULT 'Nigeria',
-  provider_supported VARCHAR(20)[] DEFAULT ARRAY['flutterwave','paystack']
+  provider_supported VARCHAR(20)[] DEFAULT ARRAY['flutterwave','paystack'],
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Existing databases seeded before this cache-freshness tracking existed
+ALTER TABLE banks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+-- Required for the ON CONFLICT (code) upsert in bank.controller.js, which
+-- refreshes the full ~50+ Nigerian bank list from Flutterwave/Paystack
+-- instead of relying solely on the small hand-seeded starter list below.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_banks_code_unique ON banks(code);
 
 -- ---------------------------------------------------------------------------
 -- AUDIT LOGS (every sensitive admin + system action)

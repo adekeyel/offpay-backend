@@ -3,6 +3,7 @@ const flutterwave = require('./flutterwave.provider');
 const paystack = require('./paystack.provider');
 const monnify = require('./monnify.provider');
 const logger = require('../../utils/logger');
+const ApiError = require('../../utils/ApiError');
 
 const PROVIDERS = { flutterwave, paystack, monnify };
 
@@ -38,30 +39,45 @@ function orderedProviders(operationName) {
 }
 
 /**
+ * Pulls the most specific message an upstream provider gave us out of an
+ * axios error, instead of the generic "Request failed with status code 400"
+ * axios itself produces. Flutterwave/Paystack/Monnify all return a JSON body
+ * with a human-readable `message` field on error responses — that's the one
+ * worth surfacing to the admin/user, not the HTTP status line.
+ */
+function upstreamMessage(err) {
+  return err.response?.data?.message || err.response?.data?.error || err.message || 'Unknown error';
+}
+
+/**
  * Runs `operation` against the first eligible (configured + supports this
  * operation) provider; if it throws, automatically retries against the next
  * one. If no provider is configured/eligible at all, or all of them fail,
- * throws a clear, real error — this deliberately never falls back to fake
- * placeholder data.
+ * throws a clear ApiError (502 Bad Gateway, since the failure is upstream,
+ * not this API's fault) — this deliberately never falls back to fake
+ * placeholder data, and never leaves the caller with a generic "Something
+ * went wrong" 500 that hides what actually happened.
  */
 async function withFallback(operationName, args) {
   const providers = orderedProviders(operationName);
   if (!providers.length) {
-    throw new Error(`No payment provider is configured and available for '${operationName}'. Check your provider API keys on Railway.`);
+    throw ApiError.badGateway(
+      `No payment provider is configured for '${operationName}'. Check your provider API keys (FLW_SECRET_KEY / PAYSTACK_SECRET_KEY / MONNIFY_*) on Railway.`
+    );
   }
 
-  let lastError;
+  let lastMessage;
   for (const provider of providers) {
     try {
       const result = await provider[operationName](args);
       return { ...result, providerUsed: provider.name };
     } catch (err) {
-      lastError = err;
-      logger.warn(`Provider ${provider.name} failed for ${operationName}: ${err.message}. ${provider === providers[providers.length - 1] ? 'No more providers to try.' : 'Falling back...'}`);
+      lastMessage = upstreamMessage(err);
+      logger.warn(`Provider ${provider.name} failed for ${operationName}: ${lastMessage}. ${provider === providers[providers.length - 1] ? 'No more providers to try.' : 'Falling back...'}`);
     }
   }
 
-  throw new Error(`All available payment providers failed for ${operationName}: ${lastError?.message}`);
+  throw ApiError.badGateway(`Could not complete this request: ${lastMessage}`);
 }
 
 module.exports = {
