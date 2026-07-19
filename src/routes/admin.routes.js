@@ -22,7 +22,7 @@ const loansCtrl = require('../controllers/adminLoans.controller');
 const cardsCtrl = require('../controllers/adminCards.controller');
 const adsCtrl = require('../controllers/adminAds.controller');
 const productsCtrl = require('../controllers/adminProducts.controller');
-const adUpload = require('../middleware/adUpload');
+const { adUpload, persistAdUpload } = require('../middleware/adUpload');
 
 // ---- Public admin auth ----
 router.post('/auth/login', authLimiter, asyncHandler(authCtrl.login));
@@ -40,10 +40,11 @@ router.get('/kyc/:id', requireRole('compliance'), asyncHandler(kycCtrl.getOne));
 router.post('/kyc/:id/approve', requireRole('compliance'), asyncHandler(kycCtrl.approve));
 router.post('/kyc/:id/reject', requireRole('compliance'), asyncHandler(kycCtrl.reject));
 
-// Tier upgrade review — compliance + admin
-router.get('/kyc/tier-upgrades/pending', requireRole('compliance'), asyncHandler(kycCtrl.listPendingTierUpgrades));
-router.post('/kyc/tier-upgrades/:id/approve', requireRole('compliance'), asyncHandler(kycCtrl.approveTierUpgrade));
-router.post('/kyc/tier-upgrades/:id/reject', requireRole('compliance'), asyncHandler(kycCtrl.rejectTierUpgrade));
+// Tier upgrade review — support + compliance + admin (every tier request must
+// be reviewed and approved by one of these roles before kyc_tier changes)
+router.get('/kyc/tier-upgrades/pending', requireRole('support', 'compliance'), asyncHandler(kycCtrl.listPendingTierUpgrades));
+router.post('/kyc/tier-upgrades/:id/approve', requireRole('support', 'compliance'), asyncHandler(kycCtrl.approveTierUpgrade));
+router.post('/kyc/tier-upgrades/:id/reject', requireRole('support', 'compliance'), asyncHandler(kycCtrl.rejectTierUpgrade));
 
 // Accounts — viewable by most operational roles, mutating actions restricted to compliance/admin
 router.get('/users', requireRole('support', 'compliance', 'finance', 'operations', 'fraud', 'recovery'), asyncHandler(accountsCtrl.listUsers));
@@ -106,7 +107,7 @@ router.get('/users/:userId/cards', requireRole('support', 'compliance', 'operati
 
 // Ads — super-admin only
 router.get('/ads', requireRole(), asyncHandler(adsCtrl.list));
-router.post('/ads', requireRole(), adUpload.single('media'), asyncHandler(adsCtrl.create));
+router.post('/ads', requireRole(), adUpload.single('media'), persistAdUpload, asyncHandler(adsCtrl.create));
 router.patch('/ads/:id', requireRole(), asyncHandler(adsCtrl.update));
 router.delete('/ads/:id', requireRole(), asyncHandler(adsCtrl.remove));
 

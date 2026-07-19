@@ -106,4 +106,20 @@ module.exports = {
     maxMb: parseInt(process.env.MAX_UPLOAD_MB || '5', 10),
     adMaxMb: parseInt(process.env.AD_MAX_UPLOAD_MB || '15', 10),
   },
+
+  // Persistent file storage for passport photos, NIN slips, utility bills, and
+  // ad media. Railway's filesystem is EPHEMERAL — anything written to local
+  // disk (the old behaviour, see src/middleware/upload.js history) is wiped
+  // on every redeploy/restart, which is why those images used to appear
+  // "broken" after a redeploy. Setting these three variables switches uploads
+  // over to Cloudinary, which stores the file permanently on Cloudinary's own
+  // storage and gives back a permanent HTTPS URL to save in the database. If
+  // these are left unset, uploads silently fall back to local disk (fine for
+  // local development only — do NOT rely on this in production on Railway).
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    apiSecret: process.env.CLOUDINARY_API_SECRET,
+  },
 };
+

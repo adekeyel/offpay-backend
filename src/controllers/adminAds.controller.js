@@ -13,7 +13,10 @@ async function create(req, res) {
   if (!req.file) throw ApiError.badRequest('An image or video file is required.');
 
   const mediaType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
-  const mediaUrl = `/uploads/ads/${req.file.filename}`;
+  // storedUrl is a permanent Cloudinary URL when Cloudinary is configured;
+  // otherwise falls back to the (non-persistent) local disk path — see
+  // src/middleware/adUpload.js.
+  const mediaUrl = req.file.storedUrl || `/uploads/ads/${req.file.filename}`;
 
   const { rows } = await query(
     `INSERT INTO ads (title, media_type, media_url, link_url, target_page, position, starts_at, ends_at, created_by)

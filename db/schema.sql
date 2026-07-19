@@ -73,6 +73,10 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 ALTER TYPE account_action_type ADD VALUE IF NOT EXISTS 'close';
 
+DO $$ BEGIN
+  CREATE TYPE user_sex AS ENUM ('male', 'female');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 -- ---------------------------------------------------------------------------
 -- USERS
 -- ---------------------------------------------------------------------------
@@ -108,6 +112,8 @@ CREATE TABLE IF NOT EXISTS users (
   utility_bill_url    TEXT,
   tier_upgrade_status kyc_status,          -- pending/approved/rejected for whichever tier request is in flight
   tier_upgrade_notes  TEXT,
+  date_of_birth       DATE,                            -- captured at registration; must match BVN record
+  sex                 user_sex,                        -- captured at registration
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -134,6 +140,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS app_lock_pin_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bvn_encrypted TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bvn_hash VARCHAR(64);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_bvn_hash_unique ON users(bvn_hash) WHERE bvn_hash IS NOT NULL;
+-- Existing databases created before date_of_birth/sex were captured at registration
+ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sex user_sex;
 
 -- ---------------------------------------------------------------------------
 -- ADMIN USERS (separate table from `users` for strict privilege separation)

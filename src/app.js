@@ -23,7 +23,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 app.use('/api', apiLimiter);
 
-// Serve uploaded passport photos (in production, point this at S3/Cloudinary instead)
+// Fallback static file serving for uploads — only ever used when Cloudinary
+// isn't configured (see src/services/storage.service.js). On Railway this
+// directory does not survive a redeploy, so CLOUDINARY_* env vars must be set
+// in production; this route exists purely for local development without
+// cloud credentials.
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.get('/health', (req, res) => res.json({ success: true, service: env.appName, status: 'ok', time: new Date().toISOString() }));

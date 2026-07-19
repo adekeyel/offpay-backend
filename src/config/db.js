@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const logger = require('../utils/logger');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -9,7 +10,7 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle PostgreSQL client', err);
+  logger.error('Unexpected error on idle PostgreSQL client', err);
 });
 
 // Convenience wrapper that logs slow queries in development
@@ -18,7 +19,7 @@ async function query(text, params) {
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
   if (process.env.NODE_ENV !== 'production' && duration > 200) {
-    console.warn(`[slow query] ${duration}ms: ${text}`);
+    logger.warn(`[slow query] ${duration}ms: ${text}`);
   }
   return res;
 }

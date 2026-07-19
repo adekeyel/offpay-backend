@@ -17,15 +17,30 @@ const { encrypt, blindIndex } = require('../utils/encryption');
  * at which point a virtual account/card is generated.
  */
 async function register(req, res) {
-  const { fullName, email, phone, bvn, password } = req.body;
-  const passportUrl = req.file ? `/uploads/${req.file.filename}` : null;
+  const { fullName, email, phone, bvn, password, dateOfBirth, sex } = req.body;
+  // storedUrl is a permanent Cloudinary URL when Cloudinary is configured
+  // (see src/services/storage.service.js); otherwise falls back to the
+  // (non-persistent) local disk path — see src/middleware/upload.js.
+  const passportUrl = req.file ? (req.file.storedUrl || `/uploads/${req.file.filename}`) : null;
 
-  if (!fullName || !email || !phone || !bvn || !password) {
-    throw ApiError.badRequest('Full name, email, phone, BVN, and password are all required.');
+  if (!fullName || !email || !phone || !bvn || !password || !dateOfBirth || !sex) {
+    throw ApiError.badRequest('Full name, email, phone, BVN, password, date of birth, and sex are all required.');
   }
   if (!/^\d{11}$/.test(bvn)) throw ApiError.badRequest('BVN must be exactly 11 digits.');
   if (password.length < 8) throw ApiError.badRequest('Password must be at least 8 characters.');
   if (!passportUrl) throw ApiError.badRequest('A passport photograph is required for identity verification.');
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth) || Number.isNaN(new Date(dateOfBirth).getTime())) {
+    throw ApiError.badRequest('dateOfBirth must be a valid date in YYYY-MM-DD format.');
+  }
+  const age = Math.floor((Date.now() - new Date(dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+  if (age < 18) throw ApiError.badRequest('You must be at least 18 years old to open an OffPay account.');
+  if (age > 120) throw ApiError.badRequest('Please double-check the date of birth entered.');
+
+  const allowedSex = ['male', 'female'];
+  if (!allowedSex.includes(String(sex).toLowerCase())) {
+    throw ApiError.badRequest(`sex must be one of: ${allowedSex.join(', ')}`);
+  }
 
   const bvnHash = blindIndex(bvn);
   const existing = await query('SELECT id FROM users WHERE email = $1 OR phone = $2 OR bvn_hash = $3', [email, phone, bvnHash]);
@@ -37,9 +52,9 @@ async function register(req, res) {
 
   const user = await withTransaction(async (client) => {
     const { rows } = await client.query(
-      `INSERT INTO users (full_name, email, phone, bvn_encrypted, bvn_hash, passport_url, password_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, full_name, email, phone, status, kyc_status`,
-      [fullName, email, phone, encrypt(bvn), bvnHash, passportUrl, passwordHash]
+      `INSERT INTO users (full_name, email, phone, bvn_encrypted, bvn_hash, passport_url, password_hash, date_of_birth, sex)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, full_name, email, phone, status, kyc_status`,
+      [fullName, email, phone, encrypt(bvn), bvnHash, passportUrl, passwordHash, dateOfBirth, String(sex).toLowerCase()]
     );
     const newUser = rows[0];
 

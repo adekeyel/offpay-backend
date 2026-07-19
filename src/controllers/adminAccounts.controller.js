@@ -47,20 +47,30 @@ async function listUsers(req, res) {
 async function getUserDetail(req, res) {
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.email, u.phone, u.bvn_encrypted, u.nin_encrypted, u.status, u.kyc_status, u.kyc_tier,
-            u.address, u.tier_upgrade_status, u.created_at,
+            u.address, u.tier_upgrade_status, u.tier_upgrade_notes, u.date_of_birth, u.sex,
+            u.passport_url, u.nin_slip_url, u.utility_bill_url, u.created_at,
             w.wallet_id, w.virtual_account, w.virtual_bank, w.balance, w.is_frozen
      FROM users u LEFT JOIN wallets w ON w.user_id = u.id WHERE u.id = $1`,
     [req.params.id]
   );
   if (!rows.length) throw ApiError.notFound('User not found.');
-  // Masked here deliberately — this endpoint is shared by support, finance,
-  // operations, fraud, and recovery, none of whom need the full BVN/NIN for
-  // their work. Compliance sees the full, unmasked numbers on the dedicated
-  // KYC review screens instead (adminKyc.controller.js), where manual
-  // identity verification actually happens.
+  // Full docs (passport/NIN slip/utility bill), date of birth, and sex are
+  // visible to every staff role that can reach this screen (support,
+  // compliance, finance, operations, fraud, recovery, admin) — the whole
+  // point is letting whoever picks up a support conversation confirm who
+  // they're talking to without having to ask the user to re-send documents.
+  //
+  // BVN/NIN stay masked for everyone EXCEPT the 'admin' role, which sees
+  // them in full here. This mirrors the dedicated KYC review screens
+  // (adminKyc.controller.js), where compliance also sees the full number,
+  // but ONLY there — this general Accounts screen keeps it masked for every
+  // role other than admin, per policy.
   const { bvn_encrypted, nin_encrypted, ...userDetail } = rows[0];
-  userDetail.bvn = maskLast4(decrypt(bvn_encrypted));
-  userDetail.nin = nin_encrypted ? maskLast4(decrypt(nin_encrypted)) : null;
+  const canSeeFullPii = req.admin.role === 'admin';
+  const decryptedBvn = decrypt(bvn_encrypted);
+  const decryptedNin = nin_encrypted ? decrypt(nin_encrypted) : null;
+  userDetail.bvn = canSeeFullPii ? decryptedBvn : maskLast4(decryptedBvn);
+  userDetail.nin = decryptedNin ? (canSeeFullPii ? decryptedNin : maskLast4(decryptedNin)) : null;
 
   const { rows: actions } = await query(
     `SELECT aa.*, a.full_name as performed_by_name FROM account_actions aa

@@ -8,7 +8,8 @@ const auditService = require('../services/audit.service');
 async function getProfile(req, res) {
   const { rows } = await query(
     `SELECT id, full_name, email, phone, bvn_encrypted, passport_url, status, kyc_status, kyc_tier, kyc_notes,
-            address, tier_upgrade_status, tier_upgrade_notes, two_fa_enabled, is_email_verified, is_phone_verified, created_at
+            address, tier_upgrade_status, tier_upgrade_notes, two_fa_enabled, is_email_verified, is_phone_verified,
+            date_of_birth, sex, created_at
      FROM users WHERE id = $1`,
     [req.user.id]
   );
@@ -60,8 +61,13 @@ async function changePassword(req, res) {
  */
 async function requestTierUpgrade(req, res) {
   const { nin, address } = req.body;
-  const ninSlipUrl = req.files?.ninSlip?.[0] ? `/uploads/${req.files.ninSlip[0].filename}` : null;
-  const utilityBillUrl = req.files?.utilityBill?.[0] ? `/uploads/${req.files.utilityBill[0].filename}` : null;
+  // storedUrl is a permanent Cloudinary URL when Cloudinary is configured;
+  // otherwise falls back to the (non-persistent) local disk path — see
+  // src/middleware/upload.js.
+  const ninSlipFile = req.files?.ninSlip?.[0];
+  const utilityBillFile = req.files?.utilityBill?.[0];
+  const ninSlipUrl = ninSlipFile ? (ninSlipFile.storedUrl || `/uploads/${ninSlipFile.filename}`) : null;
+  const utilityBillUrl = utilityBillFile ? (utilityBillFile.storedUrl || `/uploads/${utilityBillFile.filename}`) : null;
 
   if (!nin || !/^\d{11}$/.test(nin)) throw ApiError.badRequest('A valid 11-digit NIN is required.');
   if (!address) throw ApiError.badRequest('Address is required.');
