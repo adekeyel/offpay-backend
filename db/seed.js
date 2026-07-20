@@ -69,7 +69,7 @@ const BANKS = [
   ['United Bank for Africa', '033'], ['First Bank of Nigeria', '011'], ['Ecobank Nigeria', '050'],
   ['Fidelity Bank', '070'], ['Union Bank of Nigeria', '032'], ['Sterling Bank', '232'],
   ['Wema Bank', '035'], ['Polaris Bank', '076'], ['Stanbic IBTC Bank', '221'],
-  ['Kuda Microfinance Bank', '50211'], ['Opay (Paycom)', '999992'], ['Palmpay', '999991'],
+  ['Kuda Microfinance Bank', '50211'], ['Opay', '100004'], ['Palmpay', '999991'],
   ['Moniepoint MFB', '50515'], ['Providus Bank', '101'], ['Jaiz Bank', '301'],
   ['Citibank Nigeria', '023'], ['Standard Chartered Bank', '068'],
 ];
