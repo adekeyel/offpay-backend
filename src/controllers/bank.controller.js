@@ -33,7 +33,7 @@ async function listBanks(req, res) {
     `SELECT id, name, code, country, updated_at FROM banks ORDER BY name ASC`
   );
   const newestUpdate = cached.reduce((max, b) => Math.max(max, new Date(b.updated_at).getTime()), 0);
-  const isStale = !cached.length || Date.now() - newestUpdate > CACHE_TTL_MS;
+  const isStale = !cached.length || Date.now() - newestUpdate > CACHE_TTL_MS || req.query.refresh === '1';
 
   if (isStale) {
     try {
@@ -52,14 +52,27 @@ async function listBanks(req, res) {
           const { rows } = await client.query(`SELECT id, name, code, country FROM banks ORDER BY name ASC`);
           return rows;
         });
-        return res.json({ success: true, data: refreshed });
+        return res.json({ success: true, data: refreshed, meta: { source: 'live', fetchedCount: valid.length } });
       }
+      // The provider call succeeded but returned an empty/unusable list —
+      // note this explicitly rather than silently falling through, since it
+      // looks identical to a total failure otherwise.
+      return res.json({
+        success: true,
+        data: cached.map(({ updated_at, ...bank }) => bank),
+        meta: { source: 'cache', reason: 'Live provider returned no usable banks (empty or missing code/name fields).' },
+      });
     } catch (err) {
       logger.warn(`Could not refresh live bank list from provider — serving cached list instead: ${err.message}`);
+      return res.json({
+        success: true,
+        data: cached.map(({ updated_at, ...bank }) => bank),
+        meta: { source: 'cache', reason: err.message },
+      });
     }
   }
 
-  res.json({ success: true, data: cached.map(({ updated_at, ...bank }) => bank) });
+  res.json({ success: true, data: cached.map(({ updated_at, ...bank }) => bank), meta: { source: 'cache', reason: 'Cache is still fresh (refreshed within the last 24h).' } });
 }
 
 module.exports = { listBanks };
