@@ -39,7 +39,23 @@ async function createCard(req, res) {
     // Deliberately no fake/mock fallback here — if no provider can issue a
     // real card, the user needs to know that plainly rather than receive
     // fabricated card data that will fail the moment they try to use it.
-    throw ApiError.badGateway(`Could not issue a card right now: ${err.message}`);
+    //
+    // "Please enable IP Whitelisting..." is Flutterwave's own error and is
+    // an ACCOUNT/INFRA problem, not a bug in this code: your Flutterwave
+    // dashboard has IP whitelisting turned on for this app, but the server
+    // making these API calls isn't on the allowed list (Railway's outbound
+    // IP changes on redeploy unless you've provisioned a static one). Fix
+    // it at flutterwave.com > Settings > API > Whitelist IPs — either add
+    // your current outbound IP there or turn whitelisting off — then retry.
+    // This same misconfiguration is why the bank list can look stale/wrong
+    // (see bank.controller.js) and why some banks (e.g. PalmPay) fail to
+    // resolve: those calls hit the same wall and silently fall back to
+    // cached data instead.
+    const raw = err.message || 'Unknown error';
+    const friendly = /ip whitelist/i.test(raw)
+      ? 'Our card provider is rejecting requests from our server (IP not whitelisted on the provider account). This is a configuration issue on our end, not yours — please try again later or contact support.'
+      : `Could not issue a card right now: ${raw}`;
+    throw ApiError.badGateway(friendly);
   }
 
   const { rows } = await query(

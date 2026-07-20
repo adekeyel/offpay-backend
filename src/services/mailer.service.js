@@ -56,8 +56,15 @@ async function sendViaResendApi({ to, subject, text }) {
  *      a delivery failure never blocks the underlying request (registration/login).
  */
 async function deliver(to, subject, text) {
-  if (env.smtp.mockConsole || (!env.resend.apiKey && !env.smtp.host)) {
+  const hasRealProvider = Boolean(env.resend.apiKey) || Boolean(env.smtp.host && env.smtp.user);
+
+  if (env.smtp.forceMockConsole || !hasRealProvider) {
     logger.info(`[MOCK EMAIL to ${to}] ${subject}: ${text}`);
+    if (!hasRealProvider && !env.smtp.forceMockConsole) {
+      logger.warn(
+        `No email provider configured (RESEND_API_KEY or SMTP_HOST/SMTP_USER) — "${to}" did NOT receive this email, it only appears in this log. Set RESEND_API_KEY on Railway to actually deliver it.`
+      );
+    }
     return { mocked: true };
   }
 

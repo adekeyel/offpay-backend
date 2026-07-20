@@ -50,8 +50,18 @@ async function changePassword(req, res) {
 
 /**
  * Lets a user with an already-approved base KYC (Tier 1) request an upgrade
- * to a higher verification tier by submitting their NIN, a photo/scan of the
- * NIN slip, a recent utility bill, and their address.
+ * to the next verification tier. What's required depends on which tier
+ * they're moving to (see platform_settings.tier_requirements / schema.sql):
+ *
+ *   Tier 1 -> 2: NIN + a photo/scan of the NIN slip + residential address.
+ *   Tier 2 -> 3: a recent utility bill, matching the address already
+ *                captured at Tier 2 (passport was already collected at
+ *                signup, so it isn't asked for again here).
+ *
+ * Previously this endpoint demanded NIN + NIN slip + utility bill + address
+ * every time, regardless of which tier the user was actually moving to —
+ * effectively merging the Tier 2 and Tier 3 requirements into one step. This
+ * asks only for what that specific tier jump needs.
  *
  * This only FILES the request — kyc_tier is not changed here. It sets
  * tier_upgrade_status to 'pending' for an admin (compliance role) to review
@@ -60,21 +70,7 @@ async function changePassword(req, res) {
  * (see adminKyc.controller.js).
  */
 async function requestTierUpgrade(req, res) {
-  const { nin, address } = req.body;
-  // storedUrl is a permanent Cloudinary URL when Cloudinary is configured;
-  // otherwise falls back to the (non-persistent) local disk path — see
-  // src/middleware/upload.js.
-  const ninSlipFile = req.files?.ninSlip?.[0];
-  const utilityBillFile = req.files?.utilityBill?.[0];
-  const ninSlipUrl = ninSlipFile ? (ninSlipFile.storedUrl || `/uploads/${ninSlipFile.filename}`) : null;
-  const utilityBillUrl = utilityBillFile ? (utilityBillFile.storedUrl || `/uploads/${utilityBillFile.filename}`) : null;
-
-  if (!nin || !/^\d{11}$/.test(nin)) throw ApiError.badRequest('A valid 11-digit NIN is required.');
-  if (!address) throw ApiError.badRequest('Address is required.');
-  if (!ninSlipUrl) throw ApiError.badRequest('A photo or scan of your NIN slip is required.');
-  if (!utilityBillUrl) throw ApiError.badRequest('A recent utility bill is required.');
-
-  const { rows } = await query('SELECT kyc_status, kyc_tier, tier_upgrade_status FROM users WHERE id = $1', [req.user.id]);
+  const { rows } = await query('SELECT kyc_status, kyc_tier, tier_upgrade_status, address FROM users WHERE id = $1', [req.user.id]);
   if (!rows.length) throw ApiError.notFound('User not found.');
   const user = rows[0];
 
@@ -86,17 +82,48 @@ async function requestTierUpgrade(req, res) {
     throw ApiError.conflict('You already have a tier upgrade request pending review.');
   }
 
-  await query(
-    `UPDATE users
-     SET nin_encrypted = $1, nin_slip_url = $2, utility_bill_url = $3, address = $4, address_updated_at = now(),
-         tier_upgrade_status = 'pending', tier_upgrade_notes = NULL, updated_at = now()
-     WHERE id = $5`,
-    [encrypt(nin), ninSlipUrl, utilityBillUrl, address, req.user.id]
-  );
+  const movingToTier = user.kyc_tier + 1; // 1->2 or 2->3
+
+  // storedUrl is a permanent Cloudinary URL when Cloudinary is configured;
+  // otherwise falls back to the (non-persistent) local disk path — see
+  // src/middleware/upload.js.
+  const ninSlipFile = req.files?.ninSlip?.[0];
+  const utilityBillFile = req.files?.utilityBill?.[0];
+  const ninSlipUrl = ninSlipFile ? (ninSlipFile.storedUrl || `/uploads/${ninSlipFile.filename}`) : null;
+  const utilityBillUrl = utilityBillFile ? (utilityBillFile.storedUrl || `/uploads/${utilityBillFile.filename}`) : null;
+
+  if (movingToTier === 2) {
+    const { nin, address } = req.body;
+    if (!nin || !/^\d{11}$/.test(nin)) throw ApiError.badRequest('A valid 11-digit NIN is required.');
+    if (!address) throw ApiError.badRequest('Address is required.');
+    if (!ninSlipUrl) throw ApiError.badRequest('A photo or scan of your NIN slip is required.');
+
+    await query(
+      `UPDATE users
+       SET nin_encrypted = $1, nin_slip_url = $2, address = $3, address_updated_at = now(),
+           tier_upgrade_status = 'pending', tier_upgrade_notes = NULL, updated_at = now()
+       WHERE id = $4`,
+      [encrypt(nin), ninSlipUrl, address, req.user.id]
+    );
+  } else {
+    // Tier 2 -> 3: only the utility bill is needed. It must match the
+    // address already on file from Tier 2 — if the user has since moved,
+    // send them to update their address first rather than silently
+    // overwriting it here as a side effect of a document upload.
+    if (!user.address) throw ApiError.badRequest('No address on file from your Tier 2 verification. Please contact support before requesting Tier 3.');
+    if (!utilityBillUrl) throw ApiError.badRequest('A recent utility bill matching your address on file is required.');
+
+    await query(
+      `UPDATE users
+       SET utility_bill_url = $1, tier_upgrade_status = 'pending', tier_upgrade_notes = NULL, updated_at = now()
+       WHERE id = $2`,
+      [utilityBillUrl, req.user.id]
+    );
+  }
 
   await auditService.logAction({
     actorType: 'user', actorId: req.user.id, action: 'TIER_UPGRADE_REQUEST',
-    targetType: 'user', targetId: req.user.id, ipAddress: req.ip,
+    targetType: 'user', targetId: req.user.id, meta: { movingToTier }, ipAddress: req.ip,
   });
 
   res.status(201).json({

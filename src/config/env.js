@@ -52,7 +52,14 @@ module.exports = {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM || 'OffPay <no-reply@offpay.app>',
-    mockConsole: process.env.MOCK_OTP_CONSOLE !== 'false',
+    // Only forces console-only logging when explicitly asked for (local dev).
+    // Previously this defaulted to TRUE unless MOCK_OTP_CONSOLE was set to
+    // the exact string 'false' — which meant setting RESEND_API_KEY alone
+    // was NOT enough to actually email OTPs; you also had to remember to
+    // set this separately, or every OTP silently stayed console-only. See
+    // mailer.service.js's deliver(), which now decides mock vs. real
+    // delivery based on whether a real provider is actually configured.
+    forceMockConsole: process.env.MOCK_OTP_CONSOLE === 'true',
   },
 
   // Resend's HTTPS API — used in preference to raw SMTP, since Railway (and several

@@ -104,7 +104,13 @@ async function reject(req, res) {
   res.json({ success: true, message: 'KYC rejected.' });
 }
 
-/** Users at Tier 1+ awaiting review of a submitted Tier upgrade (NIN + utility bill + address). */
+/**
+ * Users at Tier 1+ awaiting review of a submitted tier upgrade. What's
+ * populated depends on which tier they're moving to — kyc_tier tells you
+ * which: kyc_tier=1 means this is a Tier 1->2 request (nin/nin_slip_url/
+ * address are the relevant fields), kyc_tier=2 means Tier 2->3 (only
+ * utility_bill_url is new; nin/address were already verified at Tier 2).
+ */
 async function listPendingTierUpgrades(req, res) {
   const { rows } = await query(
     `SELECT id, full_name, email, phone, kyc_tier, nin_encrypted, nin_slip_url, utility_bill_url, address, updated_at
