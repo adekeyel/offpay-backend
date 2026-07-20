@@ -1,14 +1,16 @@
 const crypto = require('crypto');
 const env = require('../config/env');
 const bigisub = require('./providers/bigisub.provider');
+const peyflex = require('./providers/peyflex.provider');
 
 /**
- * Mocked VTU aggregator call, used automatically whenever BIGISUB_API_KEY
- * isn't set. Every real VTU platform (Bigisub, VTpass, Baxi, Reloadly,
- * Flutterwave Bills) exposes basically this same shape: category + provider
- * + recipient + amount -> success/failure + a reference — so once
- * bigisub.provider.js is confirmed against the real API (see the warning at
- * the top of that file), nothing else in the app needs to change.
+ * Mocked VTU aggregator call, used automatically whenever no real VTU
+ * provider's API key is set. Every real VTU platform (Peyflex, Bigisub,
+ * VTpass, Baxi, Reloadly, Flutterwave Bills) exposes basically this same
+ * shape: category + provider + recipient + amount -> success/failure + a
+ * reference — so once peyflex.provider.js / bigisub.provider.js are
+ * confirmed against their real APIs (see the warnings at the top of those
+ * files), nothing else in the app needs to change.
  */
 async function mockPurchase({ category, provider, recipient, amount }) {
   // Simulate a brief provider round-trip.
@@ -28,11 +30,19 @@ async function mockPurchase({ category, provider, recipient, amount }) {
 }
 
 async function purchase({ category, provider, recipient, amount, planCode }) {
-  if (!env.providers.bigisub.apiKey) {
-    return mockPurchase({ category, provider, recipient, amount, planCode });
-  }
   const reference = `OP-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  return bigisub.purchase({ category, provider, recipient, amount, planCode, reference });
+
+  // Peyflex is preferred when configured; falls back to Bigisub if only
+  // that's configured; falls back to the mock if neither is. Swap this
+  // order (or add a per-category preference) once you know which of the
+  // two you actually want live for which service.
+  if (env.providers.peyflex.apiKey) {
+    return peyflex.purchase({ category, provider, recipient, amount, planCode, reference });
+  }
+  if (env.providers.bigisub.apiKey) {
+    return bigisub.purchase({ category, provider, recipient, amount, planCode, reference });
+  }
+  return mockPurchase({ category, provider, recipient, amount, planCode });
 }
 
 module.exports = { purchase };

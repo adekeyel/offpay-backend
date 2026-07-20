@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "migrate": "node db/migrate.js",
-    "seed": "node db/seed.js"
+    "seed": "node db/seed.js",
+    "sync:peyflex": "node db/syncPeyflexProducts.js"
   },
   "engines": {
     "node": ">=18.0.0"

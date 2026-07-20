@@ -38,12 +38,19 @@ async function purchase(req, res) {
 
   let finalAmount = parseFloat(amount);
   let productName = null;
+  let planCode = null;
   if (['data', 'cable'].includes(category)) {
     if (!productId) throw ApiError.badRequest('productId is required for data/cable purchases.');
     const { rows } = await query('SELECT * FROM vtu_products WHERE id = $1 AND active = true', [productId]);
     if (!rows.length) throw ApiError.badRequest('Selected plan is not available.');
     finalAmount = parseFloat(rows[0].amount);
     productName = rows[0].name;
+    // vtu_products.code = "provider's internal plan code" (see schema.sql) —
+    // required by Peyflex's data/cable purchase endpoints as `plan_code`.
+    // This was being looked up here but never actually forwarded to the
+    // provider call below, so a real aggregator that requires a plan code
+    // (Peyflex does) would silently fail on every data/cable purchase.
+    planCode = rows[0].code;
   }
   if (!finalAmount || finalAmount <= 0) throw ApiError.badRequest('A valid amount is required.');
 
@@ -56,7 +63,7 @@ async function purchase(req, res) {
   const total = finalAmount + fee;
   if (parseFloat(wallet.balance) < total) throw ApiError.badRequest('Insufficient balance.');
 
-  const providerResult = await vtuService.purchase({ category, provider, recipient, amount: finalAmount });
+  const providerResult = await vtuService.purchase({ category, provider, recipient, amount: finalAmount, planCode });
   if (!providerResult.success) throw ApiError.badRequest(providerResult.message || 'Purchase failed. Please try again.');
 
   const result = await withTransaction(async (client) => {

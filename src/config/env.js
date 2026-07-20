@@ -107,6 +107,19 @@ module.exports = {
       apiKey: process.env.BIGISUB_API_KEY,
       baseUrl: process.env.BIGISUB_BASE_URL || 'https://bigisub.ng/api',
     },
+    // Peyflex VTU aggregator — see src/services/providers/peyflex.provider.js.
+    // Base URL and the `Authorization: Token <key>` header scheme are
+    // confirmed from Peyflex's own public Postman docs; the purchase
+    // endpoint paths/field names are a best-effort placeholder (that part
+    // of their docs renders client-side and couldn't be read programmatically)
+    // — confirm against your Peyflex dashboard/Postman collection before
+    // relying on this in production. Until PEYFLEX_API_KEY is set, VTU
+    // purchases keep using the built-in sandbox mock, so leaving it unset
+    // is always safe.
+    peyflex: {
+      apiKey: process.env.PEYFLEX_API_KEY,
+      baseUrl: process.env.PEYFLEX_BASE_URL || 'https://client.peyflex.com.ng/api',
+    },
   },
 
   uploads: {
