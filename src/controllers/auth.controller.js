@@ -43,9 +43,36 @@ async function register(req, res) {
   }
 
   const bvnHash = blindIndex(bvn);
-  const existing = await query('SELECT id FROM users WHERE email = $1 OR phone = $2 OR bvn_hash = $3', [email, phone, bvnHash]);
+
+  // Deleted accounts must never block a new registration — their email/phone
+  // are free to reuse the moment the account is deleted (see schema.sql's
+  // partial unique indexes, which enforce this same rule at the DB level).
+  const existing = await query(
+    `SELECT id FROM users WHERE (email = $1 OR phone = $2) AND status != 'deleted'`,
+    [email, phone]
+  );
   if (existing.rows.length) {
-    throw ApiError.conflict('An account already exists with this email, phone number, or BVN.');
+    throw ApiError.conflict('An account already exists with this email or phone number.');
+  }
+
+  // BVN is deliberately NOT a hard one-account-per-person rule: someone may
+  // hold more than one OffPay account under the same BVN, but only once
+  // every existing account under that BVN has been fully verified to Tier 3.
+  // This stops someone stacking several low-KYC wallets under one identity
+  // while still allowing legitimate multi-wallet use once each one has been
+  // through full KYC. Deleted accounts don't count toward this check.
+  const { rows: bvnAccounts } = await query(
+    `SELECT id, kyc_tier FROM users WHERE bvn_hash = $1 AND status != 'deleted'`,
+    [bvnHash]
+  );
+  if (bvnAccounts.length) {
+    const belowTierThree = bvnAccounts.find((u) => u.kyc_tier < 3);
+    if (belowTierThree) {
+      throw ApiError.conflict(
+        'You already have an OffPay account registered with this BVN that has not reached Tier 3 yet. Please upgrade that account to Tier 3 before opening another one, or contact support if you need help.'
+      );
+    }
+    // Every existing account under this BVN is already Tier 3 — allow a new one.
   }
 
   const passwordHash = await bcrypt.hash(password, env.security.bcryptSaltRounds);

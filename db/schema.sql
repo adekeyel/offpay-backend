@@ -83,10 +83,10 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS users (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   full_name           VARCHAR(150) NOT NULL,          -- must match BVN record
-  email               VARCHAR(150) UNIQUE NOT NULL,
-  phone               VARCHAR(20) UNIQUE NOT NULL,
+  email               VARCHAR(150) NOT NULL,   -- uniqueness enforced only among non-deleted accounts, see idx_users_email_unique_active below
+  phone               VARCHAR(20) NOT NULL,    -- uniqueness enforced only among non-deleted accounts, see idx_users_phone_unique_active below
   bvn_encrypted       TEXT NOT NULL,           -- AES-256-GCM, see src/utils/encryption.js — never stored in plaintext
-  bvn_hash            VARCHAR(64) NOT NULL,    -- HMAC blind index; uniqueness enforced by idx_users_bvn_hash_unique below
+  bvn_hash            VARCHAR(64) NOT NULL,    -- HMAC blind index; NOT unique — see idx_users_bvn_hash below and register()'s tier-aware check
   passport_url        TEXT,                            -- uploaded passport photo
   password_hash       TEXT NOT NULL,
   pin_hash            TEXT,                             -- 4-digit transaction PIN (authorizes transfers)
@@ -120,6 +120,11 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
+-- A deleted account's email/phone must never block someone from registering
+-- again with the same details — these partial unique indexes only enforce
+-- uniqueness among accounts that are NOT deleted.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique_active ON users(email) WHERE status != 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique_active ON users(phone) WHERE status != 'deleted';
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 CREATE INDEX IF NOT EXISTS idx_users_kyc_tier ON users(kyc_tier);
 
@@ -139,7 +144,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS app_lock_pin_hash TEXT;
 -- old plaintext column once every row has been migrated.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bvn_encrypted TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bvn_hash VARCHAR(64);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_bvn_hash_unique ON users(bvn_hash) WHERE bvn_hash IS NOT NULL;
+-- BVN is intentionally NOT unique at the DB level anymore: one person may
+-- hold more than one OffPay account under the same BVN, but only once every
+-- existing account under that BVN has reached Tier 3 (enforced in
+-- auth.controller.js register(), not here, since that rule depends on
+-- kyc_tier + status which a plain index can't express). Deleted accounts are
+-- excluded from that check the same way as email/phone above.
+CREATE INDEX IF NOT EXISTS idx_users_bvn_hash ON users(bvn_hash);
 -- Existing databases created before date_of_birth/sex were captured at registration
 ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sex user_sex;

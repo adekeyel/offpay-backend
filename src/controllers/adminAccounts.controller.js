@@ -120,6 +120,21 @@ async function reverseAction(req, res) {
     if (actionRecord.action === 'freeze') {
       await client.query('UPDATE wallets SET is_frozen = false WHERE user_id = $1', [actionRecord.user_id]);
     } else {
+      if (actionRecord.action === 'delete') {
+        // Someone may have registered a brand-new account reusing this
+        // person's email/phone since the account was deleted (that's the
+        // whole point of freeing them up) — restoring the old deleted row
+        // to 'active' would then collide with that newer account.
+        const { rows: userRows } = await client.query('SELECT email, phone FROM users WHERE id = $1', [actionRecord.user_id]);
+        const { email, phone } = userRows[0];
+        const { rows: conflicts } = await client.query(
+          `SELECT id FROM users WHERE (email = $1 OR phone = $2) AND status != 'deleted' AND id != $3`,
+          [email, phone, actionRecord.user_id]
+        );
+        if (conflicts.length) {
+          throw ApiError.conflict('Cannot restore this account — its email or phone number is already in use by a newer account.');
+        }
+      }
       await client.query(`UPDATE users SET status = 'active' WHERE id = $1`, [actionRecord.user_id]);
     }
     await client.query('UPDATE account_actions SET reversed = true, reversed_by = $1, reversed_at = now() WHERE id = $2', [req.admin.id, actionRecord.id]);
