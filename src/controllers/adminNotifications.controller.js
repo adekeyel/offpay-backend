@@ -33,4 +33,23 @@ async function create(req, res) {
   res.status(201).json({ success: true, data: rows[0] });
 }
 
-module.exports = { list, markRead, create };
+/**
+ * admin-role only: broadcasts to every user's Notifications screen — used for
+ * general app announcements ('app') and app-update notices ('update'). Fans
+ * out one user_notifications row per user, so each user's read state is
+ * independent.
+ */
+async function broadcastToUsers(req, res) {
+  const { title, message, type = 'app' } = req.body;
+  if (!title || !message) throw ApiError.badRequest('title and message are required.');
+  if (!['app', 'update'].includes(type)) throw ApiError.badRequest(`type must be one of: app, update`);
+
+  const { rowCount } = await query(
+    `INSERT INTO user_notifications (user_id, type, title, message)
+     SELECT id, $1, $2, $3 FROM users WHERE status != 'deleted'`,
+    [type, title, message]
+  );
+  res.status(201).json({ success: true, message: `Sent to ${rowCount} user(s).` });
+}
+
+module.exports = { list, markRead, create, broadcastToUsers };

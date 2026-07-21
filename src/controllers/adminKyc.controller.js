@@ -3,6 +3,7 @@ const ApiError = require('../utils/ApiError');
 const providerManager = require('../services/providers/providerManager');
 const auditService = require('../services/audit.service');
 const mailer = require('../services/mailer.service');
+const { notifyUser } = require('../services/notify.service');
 const { decrypt } = require('../utils/encryption');
 
 async function listPending(req, res) {
@@ -82,6 +83,10 @@ async function approve(req, res) {
   await auditService.logAction({ actorType: 'admin', actorId: req.admin.id, action: 'KYC_APPROVE', targetType: 'user', targetId: user.id });
   await mailer.sendGenericEmail(user.email, 'Your OffPay account is verified! 🎉',
     `Hi ${user.full_name}, your identity verification is complete. Your OffPay virtual account (${virtualAccount.accountNumber}, ${virtualAccount.bankName}) is now active — you can send and receive money right away.`);
+  await notifyUser({
+    userId: user.id, type: 'app', title: 'KYC verified 🎉',
+    message: `Your identity verification is complete. Your OffPay account (${virtualAccount.accountNumber}, ${virtualAccount.bankName}) is now active.`,
+  });
 
   res.json({ success: true, message: 'KYC approved and virtual account issued.', data: { accountNumber: virtualAccount.accountNumber, bankName: virtualAccount.bankName } });
 }
@@ -100,6 +105,10 @@ async function reject(req, res) {
   await auditService.logAction({ actorType: 'admin', actorId: req.admin.id, action: 'KYC_REJECT', targetType: 'user', targetId: req.params.id, meta: { reason } });
   await mailer.sendGenericEmail(rows[0].email, 'OffPay verification update',
     `Hi ${rows[0].full_name}, we could not verify your account: ${reason}. Please contact support to resolve this or resubmit your documents.`);
+  await notifyUser({
+    userId: req.params.id, type: 'app', title: 'KYC verification unsuccessful',
+    message: `We could not verify your account: ${reason}. Please contact support or resubmit your documents.`,
+  });
 
   res.json({ success: true, message: 'KYC rejected.' });
 }
@@ -149,6 +158,10 @@ async function approveTierUpgrade(req, res) {
   });
   await mailer.sendGenericEmail(user.email, 'Your OffPay verification tier has been upgraded',
     `Hi ${user.full_name}, your account has been upgraded to KYC Tier ${newTier}. Higher transaction and loan limits are now available.`);
+  await notifyUser({
+    userId: user.id, type: 'app', title: `Upgraded to Tier ${newTier}`,
+    message: `Your account has been upgraded to KYC Tier ${newTier}. Higher transaction and loan limits are now available.`,
+  });
 
   res.json({ success: true, message: `User upgraded to Tier ${newTier}.`, data: { kycTier: newTier } });
 }
@@ -172,6 +185,10 @@ async function rejectTierUpgrade(req, res) {
   });
   await mailer.sendGenericEmail(rows[0].email, 'OffPay tier upgrade update',
     `Hi ${rows[0].full_name}, we could not approve your tier upgrade request: ${reason}. You can resubmit your documents at any time.`);
+  await notifyUser({
+    userId: req.params.id, type: 'app', title: 'Tier upgrade unsuccessful',
+    message: `We could not approve your tier upgrade request: ${reason}. You can resubmit your documents at any time.`,
+  });
 
   res.json({ success: true, message: 'Tier upgrade request rejected.' });
 }

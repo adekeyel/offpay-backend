@@ -1,5 +1,6 @@
 const { query } = require('../config/db');
 const ApiError = require('../utils/ApiError');
+const { notifyUser, notifyAdmins } = require('../services/notify.service');
 
 async function createTicket(req, res) {
   const { subject, message } = req.body;
@@ -8,6 +9,11 @@ async function createTicket(req, res) {
     `INSERT INTO support_tickets (user_id, subject, message) VALUES ($1,$2,$3) RETURNING *`,
     [req.user?.id || null, subject, message]
   );
+  await notifyAdmins({
+    title: 'New support ticket',
+    message: `New ticket: "${subject}"`,
+    severity: 'info', targetRole: 'support', relatedType: 'support_ticket', relatedId: rows[0].id,
+  });
   res.status(201).json({ success: true, data: rows[0] });
 }
 
@@ -51,7 +57,7 @@ async function userReply(req, res) {
   const { message } = req.body;
   if (!message) throw ApiError.badRequest('Message is required.');
 
-  const { rows } = await query(`SELECT id, status FROM support_tickets WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id]);
+  const { rows } = await query(`SELECT id, status, subject FROM support_tickets WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id]);
   if (!rows.length) throw ApiError.notFound('Ticket not found.');
 
   await query(`INSERT INTO support_replies (ticket_id, author_type, author_id, message) VALUES ($1,'user',$2,$3)`, [req.params.id, req.user.id, message]);
@@ -59,6 +65,11 @@ async function userReply(req, res) {
     `UPDATE support_tickets SET status = CASE WHEN status IN ('resolved','closed') THEN 'open' ELSE status END, updated_at = now() WHERE id = $1`,
     [req.params.id]
   );
+  await notifyAdmins({
+    title: 'New reply on support ticket',
+    message: `A user replied on ticket "${rows[0].subject || ''}".`,
+    severity: 'info', targetRole: 'support', relatedType: 'support_ticket', relatedId: req.params.id,
+  });
   res.status(201).json({ success: true, message: 'Reply sent.' });
 }
 
@@ -68,16 +79,59 @@ async function listAllTickets(req, res) {
   const params = [];
   let where = '';
   if (status) { params.push(status); where = `WHERE status = $1`; }
-  const { rows } = await query(`SELECT * FROM support_tickets ${where} ORDER BY created_at DESC`, params);
+  // Same "last reply" preview as myTickets (user side) — this is what admins
+  // were missing: they could see a ticket existed, but had no way to tell a
+  // user had replied again without opening the (previously nonexistent)
+  // thread view for every single ticket.
+  const { rows } = await query(
+    `SELECT t.*,
+            lr.message AS last_reply_message, lr.author_type AS last_reply_author_type, lr.created_at AS last_reply_at
+     FROM support_tickets t
+     LEFT JOIN LATERAL (
+       SELECT message, author_type, created_at FROM support_replies
+       WHERE ticket_id = t.id ORDER BY created_at DESC LIMIT 1
+     ) lr ON true
+     ${where} ORDER BY t.updated_at DESC`,
+    params
+  );
   res.json({ success: true, data: rows });
+}
+
+/**
+ * Full conversation thread for one ticket, admin side — the original message
+ * plus every reply (both user and admin) in order. This endpoint did not
+ * exist before: admins could list tickets and post a reply, but had no way
+ * to actually read what the user had said back, which is why a user's reply
+ * "didn't show" to support even though userReply() was writing it to the
+ * database correctly all along.
+ */
+async function getTicketThreadAdmin(req, res) {
+  const { rows: tickets } = await query(`SELECT * FROM support_tickets WHERE id = $1`, [req.params.id]);
+  if (!tickets.length) throw ApiError.notFound('Ticket not found.');
+
+  const { rows: replies } = await query(
+    `SELECT id, author_type, author_id, message, created_at FROM support_replies WHERE ticket_id = $1 ORDER BY created_at ASC`,
+    [req.params.id]
+  );
+  res.json({ success: true, data: { ticket: tickets[0], replies } });
 }
 
 async function replyTicket(req, res) {
   const { message, status } = req.body;
   if (!message) throw ApiError.badRequest('Reply message is required.');
+  const { rows } = await query('SELECT user_id, subject FROM support_tickets WHERE id = $1', [req.params.id]);
+  if (!rows.length) throw ApiError.notFound('Ticket not found.');
+
   await query(`INSERT INTO support_replies (ticket_id, author_type, author_id, message) VALUES ($1,'admin',$2,$3)`, [req.params.id, req.admin.id, message]);
   await query(`UPDATE support_tickets SET status = COALESCE($1, status), assigned_to = $2, updated_at = now() WHERE id = $3`, [status, req.admin.id, req.params.id]);
+  if (rows[0].user_id) {
+    await notifyUser({
+      userId: rows[0].user_id, type: 'support', title: 'Support replied to your ticket',
+      message: `Support replied on "${rows[0].subject}": ${message}`,
+      relatedType: 'support_ticket', relatedId: req.params.id,
+    });
+  }
   res.json({ success: true, message: 'Reply sent.' });
 }
 
-module.exports = { createTicket, myTickets, getTicketThread, userReply, listAllTickets, replyTicket };
+module.exports = { createTicket, myTickets, getTicketThread, userReply, listAllTickets, getTicketThreadAdmin, replyTicket };

@@ -1,4 +1,5 @@
 const { query } = require('../config/db');
+const { notifyAdmins } = require('./notify.service');
 
 const LARGE_AMOUNT_THRESHOLD = 500000; // ₦500,000 in a single transaction
 const VELOCITY_WINDOW_MINUTES = 10;
@@ -43,10 +44,18 @@ async function raiseAlert({ userId, transactionId, ruleCode, severity, reason })
     [transactionId, ruleCode]
   );
   if (existing.length) return;
-  await query(
-    `INSERT INTO fraud_alerts (user_id, transaction_id, rule_code, severity, reason) VALUES ($1,$2,$3,$4,$5)`,
+  const { rows } = await query(
+    `INSERT INTO fraud_alerts (user_id, transaction_id, rule_code, severity, reason) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
     [userId, transactionId, ruleCode, severity, reason]
   );
+  await notifyAdmins({
+    title: `Fraud alert: ${ruleCode}`,
+    message: reason,
+    severity: severity === 'high' || severity === 'critical' ? 'critical' : 'warning',
+    targetRole: 'fraud',
+    relatedType: 'fraud_alert',
+    relatedId: rows[0].id,
+  });
 }
 
 module.exports = { evaluateTransaction };

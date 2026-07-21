@@ -4,6 +4,7 @@ const ApiError = require('../utils/ApiError');
 const env = require('../config/env');
 const { encrypt, decrypt, maskLast4 } = require('../utils/encryption');
 const auditService = require('../services/audit.service');
+const { notifyAdmins } = require('../services/notify.service');
 
 async function getProfile(req, res) {
   const { rows } = await query(
@@ -124,6 +125,11 @@ async function requestTierUpgrade(req, res) {
   await auditService.logAction({
     actorType: 'user', actorId: req.user.id, action: 'TIER_UPGRADE_REQUEST',
     targetType: 'user', targetId: req.user.id, meta: { movingToTier }, ipAddress: req.ip,
+  });
+  await notifyAdmins({
+    title: 'New tier upgrade request',
+    message: `A user has requested an upgrade to Tier ${movingToTier} and is awaiting review.`,
+    severity: 'info', targetRole: 'compliance', relatedType: 'user', relatedId: req.user.id,
   });
 
   res.status(201).json({

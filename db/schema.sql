@@ -479,6 +479,26 @@ CREATE TABLE IF NOT EXISTS notification_reads (
 );
 
 -- ---------------------------------------------------------------------------
+-- CLIENT-FACING NOTIFICATIONS — what a user sees on the Notifications screen
+-- in the app: new-device/login alerts, general app announcements, app-update
+-- notices, and support-ticket-replied alerts. Distinct from the admin-only
+-- `notifications`/`notification_reads` pair above.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_notifications (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type          VARCHAR(20) NOT NULL, -- login | app | update | support
+  title         VARCHAR(150) NOT NULL,
+  message       TEXT NOT NULL,
+  related_type  VARCHAR(50),          -- e.g. 'support_ticket'
+  related_id    UUID,                 -- e.g. the ticket id, so tapping can deep-link
+  is_read       BOOLEAN NOT NULL DEFAULT false,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user ON user_notifications(user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
 -- PLATFORM SETTINGS (super-admin adjustable policies: limits, tier rules, etc.)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS platform_settings (

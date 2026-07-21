@@ -7,6 +7,7 @@ const otpService = require('../services/otp.service');
 const tokenService = require('../services/token.service');
 const { generateWalletId, generateVirtualAccountNumber } = require('../utils/idGenerators');
 const auditService = require('../services/audit.service');
+const { notifyUser, notifyAdmins } = require('../services/notify.service');
 const { encrypt, blindIndex } = require('../utils/encryption');
 
 /**
@@ -97,6 +98,11 @@ async function register(req, res) {
 
   await otpService.issueOtp({ userId: user.id, destination: email, channel: 'email', purpose: 'register' });
   await auditService.logAction({ actorType: 'user', actorId: user.id, action: 'REGISTER', targetType: 'user', targetId: user.id, ipAddress: req.ip });
+  await notifyAdmins({
+    title: 'New KYC pending review',
+    message: `${fullName} just registered and is awaiting KYC verification.`,
+    severity: 'info', targetRole: 'compliance', relatedType: 'user', relatedId: user.id,
+  });
 
   res.status(201).json({
     success: true,
@@ -145,6 +151,11 @@ async function createSession(user, deviceId, userAgent, req) {
     [user.id, deviceId, refreshTokenHash, userAgent || req.headers['user-agent'], req.ip]
   );
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
+
+  await notifyUser({
+    userId: user.id, type: 'login', title: 'New login to your account',
+    message: `Your account was just accessed${req?.ip ? ` from IP ${req.ip}` : ''}. If this wasn't you, contact support immediately.`,
+  });
 
   return { accessToken, refreshToken };
 }

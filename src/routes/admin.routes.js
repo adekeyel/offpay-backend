@@ -95,12 +95,14 @@ router.post('/recovery-requests/:id/resolve', requireRole('recovery'), asyncHand
 
 // Support tickets — support + admin
 router.get('/support/tickets', requireRole('support'), asyncHandler(supportCtrl.listAllTickets));
+router.get('/support/tickets/:id', requireRole('support'), asyncHandler(supportCtrl.getTicketThreadAdmin));
 router.post('/support/tickets/:id/reply', requireRole('support'), asyncHandler(supportCtrl.replyTicket));
 
 // Internal notifications — everyone can read/mark-read, only super-admin can broadcast
 router.get('/notifications', asyncHandler(notificationsCtrl.list));
 router.post('/notifications/:id/read', asyncHandler(notificationsCtrl.markRead));
 router.post('/notifications', requireRole(), asyncHandler(notificationsCtrl.create));
+router.post('/user-notifications/broadcast', requireRole(), asyncHandler(notificationsCtrl.broadcastToUsers));
 
 // Card visibility (masked only — see adminCards.controller.js) — super admin, support, compliance, operations
 router.get('/users/:userId/cards', requireRole('support', 'compliance', 'operations'), asyncHandler(cardsCtrl.getUserCards));
