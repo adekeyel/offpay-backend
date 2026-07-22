@@ -166,7 +166,16 @@ async function transferToBank(req, res) {
     await withTransaction(async (client) => {
       await walletService.reverseDebit(client, { originalTxn: debitTxn, reason: err.message || 'Transfer could not be initiated.' });
     });
-    throw ApiError.badGateway(`Transfer failed: ${err.message}. Your money has been refunded.`);
+    const raw = err.message || 'Unknown error';
+    // "Please enable IP Whitelisting..." is Flutterwave's own error and is
+    // an ACCOUNT/INFRA problem, not a bug in this code — see the identical
+    // note in card.controller.js. Surfacing Flutterwave's literal wording to
+    // end users is confusing (they can't do anything about it), so show a
+    // clear, honest message instead while still keeping the refund note.
+    const friendly = /ip whitelist/i.test(raw)
+      ? 'Transfer failed: our transfer provider is rejecting requests from our server right now (a configuration issue on our end, not yours). Your money has been refunded — please try again shortly.'
+      : `Transfer failed: ${raw}. Your money has been refunded.`;
+    throw ApiError.badGateway(friendly);
   }
 }
 
