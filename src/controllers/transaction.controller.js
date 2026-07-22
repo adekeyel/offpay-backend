@@ -135,7 +135,7 @@ async function simulateExternalDeposit(req, res) {
 
   const txn = await withTransaction(async (client) => {
     return walletService.creditWallet(client, {
-      walletId: wallet.id, amount: netCredit, type: 'deposit_external', provider: 'sandbox',
+      walletId: wallet.id, amount: netCredit, fee, type: 'deposit_external', provider: 'sandbox',
       counterparty: { name: senderName || 'External Sender', bank: senderBank || 'External Bank' },
       narration: `Deposit from ${senderBank || 'external bank'} (fee ₦${fee} deducted)`,
       meta: { grossAmount: amount, fee },

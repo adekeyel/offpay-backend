@@ -94,16 +94,24 @@ router.post('/flutterwave', asyncHandler(async (req, res) => {
         // accounts — see Flutterwave's Virtual Accounts webhook docs
         // (meta_data.originatorname / originatoraccountnumber / bankname).
         const originator = event.data.meta_data || {};
+        // event.data.narration is the description the sender's own bank app
+        // sent along with the transfer (what they typed as the transfer
+        // reason) — this is distinct from tx_ref, which is only the account
+        // matching key. Previously this was hardcoded to a generic string,
+        // which threw away what the sender actually wrote. Fall back to a
+        // generic label only if the provider genuinely sent nothing.
+        const senderNarration = event.data.narration || originator.narration || null;
         const creditTxn = await withTransaction(async (client) => {
           return walletService.creditWallet(client, {
-            walletId: wallet.id, amount: grossAmount - fee, type: 'deposit_external', provider: 'flutterwave',
+            walletId: wallet.id, amount: grossAmount - fee, fee, type: 'deposit_external', provider: 'flutterwave',
             providerReference: txRef,
             counterparty: {
               name: originator.originatorname || event.data.customer?.name || null,
               bank: originator.bankname || event.data.customer?.bank || null,
               number: originator.originatoraccountnumber || null,
             },
-            narration: 'Inbound bank deposit', meta: { grossAmount, fee },
+            narration: senderNarration || 'Inbound bank transfer',
+            meta: { grossAmount, fee },
           });
         });
         await tierLimitService.flagDepositIfOverTier({ userId: wallet.user_id, walletId: wallet.id, txnId: creditTxn.id, amount: grossAmount - fee });
@@ -166,16 +174,23 @@ router.post('/paystack', asyncHandler(async (req, res) => {
         // Accounts webhook docs. Nothing else on the payload identifies who
         // actually sent the money, so this was previously left blank.
         const senderAuth = event.data.authorization || {};
+        // Paystack echoes back the narration the sender's bank sent along
+        // with the transfer on data.narration for DVA charge.success events
+        // (separate from data.reference/data.gateway_response). Previously
+        // this was hardcoded to a generic string, so whatever the sender
+        // actually typed as the transfer description was thrown away.
+        const senderNarration = event.data.narration || null;
         const creditTxn = await withTransaction(async (client) => {
           return walletService.creditWallet(client, {
-            walletId: wallet.id, amount: grossAmount - fee, type: 'deposit_external', provider: 'paystack',
+            walletId: wallet.id, amount: grossAmount - fee, fee, type: 'deposit_external', provider: 'paystack',
             providerReference: event.data.reference,
             counterparty: {
               name: senderAuth.sender_name || null,
               bank: senderAuth.sender_bank || null,
               number: senderAuth.sender_bank_account_number || null,
             },
-            narration: 'Inbound bank deposit', meta: { grossAmount, fee },
+            narration: senderNarration || 'Inbound bank transfer',
+            meta: { grossAmount, fee },
           });
         });
         await tierLimitService.flagDepositIfOverTier({ userId: wallet.user_id, walletId: wallet.id, txnId: creditTxn.id, amount: grossAmount - fee });

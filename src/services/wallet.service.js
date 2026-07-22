@@ -213,8 +213,20 @@ async function reverseDebit(client, { originalTxn, reason }) {
   return rows[0];
 }
 
-/** Atomically credits a wallet, recording a ledger entry. */
-async function creditWallet(client, { walletId, amount, type, provider, providerReference, counterparty, narration, meta, offlineQueueId }) {
+/**
+ * Atomically credits a wallet, recording a ledger entry.
+ *
+ * `fee` here is for RECORD-KEEPING ONLY — it does not affect balanceAfter.
+ * Callers (e.g. the deposit webhooks) that deduct a fee before crediting must
+ * pass `amount` as the already-net amount actually credited to the wallet,
+ * and pass the deducted fee separately via `fee` so it's visible in the
+ * ledger. Previously this always wrote `fee = 0` on every credit row
+ * regardless of what was actually withheld, which meant every inbound
+ * deposit silently vanished from fee-revenue reporting (SUM(fee) in
+ * adminDashboard.controller.js / adminTransactions.controller.js) even
+ * though the fee had genuinely been deducted from the depositor.
+ */
+async function creditWallet(client, { walletId, amount, fee = 0, type, provider, providerReference, counterparty, narration, meta, offlineQueueId }) {
   const { rows: walletRows } = await client.query('SELECT * FROM wallets WHERE id = $1 FOR UPDATE', [walletId]);
   if (!walletRows.length) throw ApiError.notFound('Wallet not found.');
   const wallet = walletRows[0];
@@ -228,9 +240,9 @@ async function creditWallet(client, { walletId, amount, type, provider, provider
     `INSERT INTO transactions
       (reference, wallet_id, type, direction, amount, fee, balance_before, balance_after, status, provider, provider_reference,
        counterparty_name, counterparty_bank, counterparty_number, narration, meta, offline_queue_id)
-     VALUES ($1,$2,$3,'credit',$4,0,$5,$6,'success',$7,$8,$9,$10,$11,$12,$13,$14)
+     VALUES ($1,$2,$3,'credit',$4,$5,$6,$7,'success',$8,$9,$10,$11,$12,$13,$14,$15)
      RETURNING *`,
-    [reference, walletId, type, amount, balanceBefore, balanceAfter, provider || 'internal', providerReference || null,
+    [reference, walletId, type, amount, fee, balanceBefore, balanceAfter, provider || 'internal', providerReference || null,
       counterparty?.name || null, counterparty?.bank || null, counterparty?.number || null, narration || null, meta || {}, offlineQueueId || null]
   );
 

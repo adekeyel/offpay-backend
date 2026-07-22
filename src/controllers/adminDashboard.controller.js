@@ -4,9 +4,11 @@ const FINANCE_ROLES = ['admin', 'finance'];
 
 /**
  * High-level KPIs for the admin overview page.
- * Every role sees the operational counters and charts. Only super admin ("admin")
- * and finance see the treasury-level numbers (total wallet balance, fee revenue) —
- * everyone else only sees today's transaction volume as their "balance for the day".
+ * Every role — including admin and finance — sees today's transaction
+ * volume. Only super admin ("admin") and finance additionally see the
+ * treasury-level numbers: total wallet balance, weekly/monthly volume, and
+ * fee revenue. Nothing is ever hidden from admin/finance; the restriction
+ * only ever removes the weekly/monthly/total figures from everyone else.
  */
 async function stats(req, res) {
   const canSeeFinance = FINANCE_ROLES.includes(req.admin.role);
@@ -46,6 +48,7 @@ async function stats(req, res) {
     pendingKyc: parseInt(pendingKyc[0].count, 10),
     openTickets: parseInt(openTickets[0].count, 10),
     fraudAlerts: parseInt(fraudAlerts[0].count, 10),
+    // Visible to every role, admin/finance included.
     todayVolume: parseFloat(todayVolume[0].total),
     charts: {
       dailyTransactions: dailyTxns.map((r) => ({ date: r.date, count: parseInt(r.count, 10) })),
@@ -55,6 +58,8 @@ async function stats(req, res) {
     },
   };
 
+  // Weekly/monthly/total volume, total wallet balance, and fee revenue —
+  // restricted to admin/finance only. Everyone else stops at todayVolume above.
   if (canSeeFinance) {
     const [{ rows: walletTotal }, { rows: weekVol }, { rows: monthVol }, { rows: feeDay }, { rows: feeWeek }, { rows: feeMonth }] = await Promise.all([
       query(`SELECT COALESCE(SUM(balance),0) AS total_balance, COUNT(*) AS wallet_count FROM wallets`),
