@@ -28,8 +28,6 @@ function generateReceipt(txn, wallet, res) {
     ['Direction', txn.direction.toUpperCase()],
     ['Amount', money(txn.amount, wallet.currency)],
     ['Fee', money(txn.fee, wallet.currency)],
-    ['Balance Before', money(txn.balance_before, wallet.currency)],
-    ['Balance After', money(txn.balance_after, wallet.currency)],
     ['Status', txn.status.toUpperCase()],
   ];
   if (txn.counterparty_name) rows.push(['Counterparty', txn.counterparty_name]);
@@ -73,31 +71,38 @@ function generateStatement({ user, wallet, transactions, from, to }, res) {
   doc.text(`Closing Balance: ${money(wallet.balance, wallet.currency)}`, 350, 105);
   doc.text(`Generated: ${new Date().toLocaleString('en-NG')}`, 350, 120);
 
+  // Balance before/after is intentionally shown here (and only here) —
+  // a statement of account is a personal ledger the user downloads for
+  // their own records, unlike the single-transaction receipt above, which
+  // is routinely shared with third parties and shouldn't expose wallet
+  // balances.
   let y = 210;
-  doc.font('Helvetica-Bold').fontSize(9);
+  doc.font('Helvetica-Bold').fontSize(8);
   doc.rect(40, y - 5, 515, 20).fill(ACCENT_COLOR);
   doc.fillColor('#0E2230');
   doc.text('Date', 45, y);
-  doc.text('Reference', 130, y);
-  doc.text('Type', 260, y);
-  doc.text('Amount', 350, y);
-  doc.text('Fee', 420, y);
-  doc.text('Balance', 470, y);
+  doc.text('Reference', 110, y);
+  doc.text('Type', 210, y);
+  doc.text('Amount', 285, y);
+  doc.text('Fee', 340, y);
+  doc.text('Bal. before', 385, y);
+  doc.text('Bal. after', 450, y);
   y += 22;
 
-  doc.font('Helvetica').fontSize(8);
+  doc.font('Helvetica').fontSize(7.5);
   transactions.forEach((t, i) => {
     if (y > 760) { doc.addPage(); y = 40; }
     if (i % 2 === 0) doc.rect(40, y - 4, 515, 18).fill('#F7F8FA');
     doc.fillColor('#333333');
     doc.text(new Date(t.created_at).toLocaleDateString('en-NG'), 45, y);
-    doc.text(t.reference, 130, y, { width: 125, ellipsis: true });
-    doc.text(t.type.replace(/_/g, ' '), 260, y, { width: 85 });
+    doc.text(t.reference, 110, y, { width: 95, ellipsis: true });
+    doc.text(t.type.replace(/_/g, ' '), 210, y, { width: 70 });
     doc.fillColor(t.direction === 'credit' ? '#1F9D74' : '#C0392B');
-    doc.text(`${t.direction === 'credit' ? '+' : '-'}${money(t.amount, wallet.currency)}`, 350, y);
+    doc.text(`${t.direction === 'credit' ? '+' : '-'}${money(t.amount, wallet.currency)}`, 285, y, { width: 50 });
     doc.fillColor('#333333');
-    doc.text(money(t.fee, wallet.currency), 420, y);
-    doc.text(money(t.balance_after, wallet.currency), 470, y);
+    doc.text(money(t.fee, wallet.currency), 340, y, { width: 40 });
+    doc.text(money(t.balance_before, wallet.currency), 385, y, { width: 60 });
+    doc.text(money(t.balance_after, wallet.currency), 450, y, { width: 60 });
     y += 18;
   });
 

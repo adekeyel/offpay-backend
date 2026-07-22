@@ -85,10 +85,24 @@ router.post('/flutterwave', asyncHandler(async (req, res) => {
       } else {
         const grossAmount = event.data.amount;
         const fee = await feeService.calculateFee('deposit_external', grossAmount);
+        // event.data.customer is the virtual account's own owner (i.e. the
+        // OffPay user being credited), NOT the person who sent the money —
+        // using it as the counterparty showed the receiver's own name back
+        // to them instead of who actually paid in. The real sender (the
+        // originating bank customer) is reported separately by Flutterwave
+        // in meta_data for BANK_TRANSFER_TRANSACTION events on virtual
+        // accounts — see Flutterwave's Virtual Accounts webhook docs
+        // (meta_data.originatorname / originatoraccountnumber / bankname).
+        const originator = event.data.meta_data || {};
         const creditTxn = await withTransaction(async (client) => {
           return walletService.creditWallet(client, {
             walletId: wallet.id, amount: grossAmount - fee, type: 'deposit_external', provider: 'flutterwave',
-            providerReference: txRef, counterparty: { name: event.data.customer?.name, bank: event.data.customer?.bank },
+            providerReference: txRef,
+            counterparty: {
+              name: originator.originatorname || event.data.customer?.name || null,
+              bank: originator.bankname || event.data.customer?.bank || null,
+              number: originator.originatoraccountnumber || null,
+            },
             narration: 'Inbound bank deposit', meta: { grossAmount, fee },
           });
         });
@@ -146,10 +160,22 @@ router.post('/paystack', asyncHandler(async (req, res) => {
       } else {
         const grossAmount = event.data.amount / 100;
         const fee = await feeService.calculateFee('deposit_external', grossAmount);
+        // The real sender's details for a Dedicated Virtual Account deposit
+        // live on data.authorization (sender_name / sender_bank /
+        // sender_bank_account_number) — see Paystack's Dedicated Virtual
+        // Accounts webhook docs. Nothing else on the payload identifies who
+        // actually sent the money, so this was previously left blank.
+        const senderAuth = event.data.authorization || {};
         const creditTxn = await withTransaction(async (client) => {
           return walletService.creditWallet(client, {
             walletId: wallet.id, amount: grossAmount - fee, type: 'deposit_external', provider: 'paystack',
-            providerReference: event.data.reference, narration: 'Inbound bank deposit', meta: { grossAmount, fee },
+            providerReference: event.data.reference,
+            counterparty: {
+              name: senderAuth.sender_name || null,
+              bank: senderAuth.sender_bank || null,
+              number: senderAuth.sender_bank_account_number || null,
+            },
+            narration: 'Inbound bank deposit', meta: { grossAmount, fee },
           });
         });
         await tierLimitService.flagDepositIfOverTier({ userId: wallet.user_id, walletId: wallet.id, txnId: creditTxn.id, amount: grossAmount - fee });
