@@ -46,6 +46,7 @@ app.use('/api/loans', require('./routes/loan.routes'));
 app.use('/api/wealth', require('./routes/wealth.routes'));
 app.use('/api/banks', require('./routes/bank.routes'));
 app.use('/api/support', require('./routes/support.routes'));
+app.use('/api/security', require('./routes/security.routes'));
 app.use('/api/webhooks', require('./routes/webhook.routes'));
 app.use('/api/admin', require('./routes/admin.routes'));
 

@@ -5,6 +5,7 @@ const feeService = require('../services/fee.service');
 const tierLimitService = require('../services/tierLimit.service');
 const providerManager = require('../services/providers/providerManager');
 const { requireValidPin } = require('../utils/verifyPin');
+const securityService = require('../services/security.service');
 const { query, withTransaction } = require('../config/db');
 const { generateTxnReference } = require('../utils/idGenerators');
 
@@ -111,12 +112,15 @@ async function resolveExternalAccount(req, res) {
  *      it to 'success' or reverses it on failure.
  */
 async function transferToBank(req, res) {
-  const { accountNumber, bankCode, bankName, amount, narration, pin } = req.body;
+  const { accountNumber, bankCode, bankName, amount, narration, pin, otpCode } = req.body;
   if (!accountNumber || !bankCode || !amount) throw ApiError.badRequest('accountNumber, bankCode, and amount are required.');
   const amt = parseFloat(amount);
   if (!amt || amt <= 0) throw ApiError.badRequest('Enter a valid amount.');
 
   await requireValidPin(req.user.id, pin);
+  // Online-only enforcement — see security.service.js enforceTransferOtp()
+  // for why this is never called for offline-queued transfers.
+  await securityService.enforceTransferOtp({ userId: req.user.id, email: req.user.email, amount: amt, otpCode });
 
   const wallet = await walletService.getWalletByUserId(req.user.id);
   await tierLimitService.enforceOutgoingLimit({ userId: req.user.id, walletId: wallet.id, amount: amt });

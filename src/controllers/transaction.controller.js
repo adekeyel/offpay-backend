@@ -7,6 +7,7 @@ const pdfService = require('../services/pdf.service');
 const auditService = require('../services/audit.service');
 const fraudService = require('../services/fraud.service');
 const tierLimitService = require('../services/tierLimit.service');
+const securityService = require('../services/security.service');
 const env = require('../config/env');
 const { generateTxnReference } = require('../utils/idGenerators');
 
@@ -16,11 +17,14 @@ const { generateTxnReference } = require('../utils/idGenerators');
  * bank matches the sender's own virtual account bank.
  */
 async function sendToBank(req, res) {
-  const { bankCode, bankName, accountNumber, accountName, amount, narration, pin } = req.body;
+  const { bankCode, bankName, accountNumber, accountName, amount, narration, pin, otpCode } = req.body;
   if (!bankCode || !accountNumber || !amount) throw ApiError.badRequest('bankCode, accountNumber, and amount are required.');
   if (amount <= 0) throw ApiError.badRequest('Amount must be greater than zero.');
 
   await verifyTransactionPin(req.user.id, pin);
+  // Online-only — never enforced on offline-queued transfers. See
+  // security.service.js enforceTransferOtp() for the full explanation.
+  await securityService.enforceTransferOtp({ userId: req.user.id, email: req.user.email, amount, otpCode });
 
   const wallet = await walletService.getWalletByUserId(req.user.id);
   await tierLimitService.enforceOutgoingLimit({ userId: req.user.id, walletId: wallet.id, amount });
@@ -69,11 +73,12 @@ async function sendToBank(req, res) {
 
 /** Send to another OffPay user, in-app, by their Wallet ID or account number (online). */
 async function sendInApp(req, res) {
-  const { recipientWalletId, recipientAccountNumber, amount, narration, pin } = req.body;
+  const { recipientWalletId, recipientAccountNumber, amount, narration, pin, otpCode } = req.body;
   if (!recipientWalletId && !recipientAccountNumber) throw ApiError.badRequest('Provide recipientWalletId or recipientAccountNumber.');
   if (!amount || amount <= 0) throw ApiError.badRequest('Amount must be greater than zero.');
 
   await verifyTransactionPin(req.user.id, pin);
+  await securityService.enforceTransferOtp({ userId: req.user.id, email: req.user.email, amount, otpCode });
 
   const senderWallet = await walletService.getWalletByUserId(req.user.id);
   const recipientWallet = recipientWalletId

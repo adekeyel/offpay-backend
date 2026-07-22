@@ -44,6 +44,13 @@ module.exports = {
     // the email provider. Turn this OFF (unset, or set to 'false') before any
     // real launch -- it defeats the purpose of email verification while on.
     exposeOtpInResponse: process.env.EXPOSE_OTP_IN_RESPONSE === 'true',
+    // Online transfers at or above this amount require OTP/2FA verification
+    // (Google Authenticator code if google2fa_enabled, otherwise an emailed
+    // code if email2fa_withdrawals_enabled — see security.service.js) even
+    // if the user hasn't turned on Transfer Protection. With Transfer
+    // Protection on, every online transfer requires it regardless of amount.
+    // Never enforced on offline-queued transfers — see offlineVoucher.controller.js.
+    largeTransferOtpThreshold: parseFloat(process.env.LARGE_TRANSFER_OTP_THRESHOLD || '100000'),
   },
 
   smtp: {

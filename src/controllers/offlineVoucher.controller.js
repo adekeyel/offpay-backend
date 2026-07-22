@@ -6,6 +6,16 @@ const auditService = require('../services/audit.service');
 const pushService = require('../services/push.service');
 const { verifyVoucherSignature, buildVoucherPayload } = require('../utils/voucherCrypto');
 
+// NOTE on Security Settings (Transfer Protection / Google 2FA / Email 2FA
+// for withdrawals): none of those are checked anywhere in this file, and
+// that's intentional. Offline vouchers are authorized by the sending
+// device's on-device Ed25519 signature at creation time (see
+// verifyVoucherSignature below), not by a live OTP prompt — there is no
+// network to deliver an emailed code or reach this backend for a Google 2FA
+// round trip while offline. Enforcing those settings here would just lock
+// users out of the offline-transfer feature entirely. They only apply to
+// the online endpoints (transaction.controller.js sendToBank/sendInApp).
+
 /**
  * Called by the RECEIVER's device once it has connectivity, reporting a
  * voucher it received directly from a sender (via QR/Bluetooth/NFC) that

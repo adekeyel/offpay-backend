@@ -155,6 +155,14 @@ CREATE INDEX IF NOT EXISTS idx_users_bvn_hash ON users(bvn_hash);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sex user_sex;
 
+-- Security Settings screen — see db/migrations/005_security_settings.sql for
+-- the full rationale on each column.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS transfer_protection_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS biometrics_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google2fa_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google2fa_secret_encrypted TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email2fa_withdrawals_enabled BOOLEAN NOT NULL DEFAULT false;
+
 -- ---------------------------------------------------------------------------
 -- ADMIN USERS (separate table from `users` for strict privilege separation)
 -- ---------------------------------------------------------------------------

@@ -61,6 +61,7 @@ async function listBanks(req, res) {
         success: true,
         data: cached.map(({ updated_at, ...bank }) => bank),
         meta: { source: 'cache', reason: 'Live provider returned no usable banks (empty or missing code/name fields).' },
+        warning: 'The live provider responded but returned no usable banks (empty list, or entries missing a code/name). Showing the cached list instead.',
       });
     } catch (err) {
       logger.warn(`Could not refresh live bank list from provider — serving cached list instead: ${err.message}`);
@@ -68,6 +69,12 @@ async function listBanks(req, res) {
         success: true,
         data: cached.map(({ updated_at, ...bank }) => bank),
         meta: { source: 'cache', reason: err.message },
+        // Surfaced at top level too (not just meta, which most callers ignore)
+        // so this is impossible to miss while debugging a provider outage —
+        // see providerManager.withFallback for what this message actually contains.
+        warning: cached.length
+          ? `Showing a cached bank list — could not refresh from the live provider: ${err.message}`
+          : `No banks available: could not reach the live provider (${err.message}), and there is no cached list yet.`,
       });
     }
   }
