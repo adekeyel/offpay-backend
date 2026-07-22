@@ -70,6 +70,18 @@ async function withFallback(operationName, args) {
   for (const provider of providers) {
     try {
       const result = await provider[operationName](args);
+      // listBanks (and any future array-returning operation) must stay an
+      // array — spreading an array into `{...result, providerUsed}` silently
+      // turns it into a plain object with numeric-string keys (`{0: {...},
+      // 1: {...}, providerUsed: 'flutterwave'}`), which is where
+      // "liveBanks.filter is not a function" in bank.controller.js came
+      // from. Attach providerUsed as a non-enumerable property instead so
+      // the array stays an array (and doesn't show up if the result is ever
+      // JSON.stringified without it).
+      if (Array.isArray(result)) {
+        Object.defineProperty(result, 'providerUsed', { value: provider.name, enumerable: false });
+        return result;
+      }
       return { ...result, providerUsed: provider.name };
     } catch (err) {
       lastMessage = upstreamMessage(err);

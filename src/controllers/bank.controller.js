@@ -38,7 +38,7 @@ async function listBanks(req, res) {
   if (isStale) {
     try {
       const liveBanks = await providerManager.listBanks();
-      const valid = liveBanks.filter((b) => b.code && b.name);
+      const valid = (Array.isArray(liveBanks) ? liveBanks : []).filter((b) => b.code && b.name);
       if (valid.length) {
         const refreshed = await withTransaction(async (client) => {
           await client.query('DELETE FROM banks');

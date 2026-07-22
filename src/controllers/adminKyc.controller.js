@@ -75,8 +75,8 @@ async function approve(req, res) {
       [virtualAccount.accountNumber, virtualAccount.bankName, wallet.id]
     );
     await client.query(
-      `INSERT INTO virtual_accounts (wallet_id, provider, provider_ref, account_number, bank_name) VALUES ($1,$2,$3,$4,$5)`,
-      [wallet.id, virtualAccount.providerUsed || virtualAccount.provider, virtualAccount.providerRef || null, virtualAccount.accountNumber, virtualAccount.bankName]
+      `INSERT INTO virtual_accounts (wallet_id, provider, provider_ref, account_number, bank_name, tx_ref) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [wallet.id, virtualAccount.providerUsed || virtualAccount.provider, virtualAccount.providerRef || null, virtualAccount.accountNumber, virtualAccount.bankName, virtualAccount.txRef || `OP-VA-${user.id}`]
     );
   });
 

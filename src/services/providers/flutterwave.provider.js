@@ -24,6 +24,9 @@ async function createVirtualAccount({ email, bvn, fullName, phone, txRef }) {
     accountNumber: data.data.account_number,
     bankName: data.data.bank_name,
     providerRef: data.data.flw_ref || data.data.order_ref,
+    // Flutterwave echoes this same tx_ref back on every future deposit into
+    // this account's charge.completed webhook — see webhook.routes.js.
+    txRef,
   };
 }
 

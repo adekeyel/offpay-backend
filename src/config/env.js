@@ -87,6 +87,14 @@ module.exports = {
       publicKey: process.env.FLW_PUBLIC_KEY,
       encryptionKey: process.env.FLW_ENCRYPTION_KEY,
       baseUrl: process.env.FLW_BASE_URL || 'https://api.flutterwave.com/v3',
+      // The "Secret Hash" set on your Flutterwave dashboard's Webhooks page
+      // (Settings > Webhooks). Every real webhook Flutterwave sends carries
+      // this same value in the `verif-hash` header — if this is unset on
+      // Railway, EVERY genuine webhook gets rejected with a 401 before your
+      // code even looks at it, and deposits will never credit. Routed
+      // through required() so a missing value is now flagged at startup in
+      // Railway logs instead of failing silently on every webhook call.
+      webhookHash: required('FLW_WEBHOOK_HASH'),
     },
     paystack: {
       secretKey: process.env.PAYSTACK_SECRET_KEY,

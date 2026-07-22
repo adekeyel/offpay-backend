@@ -208,8 +208,25 @@ CREATE TABLE IF NOT EXISTS virtual_accounts (
   provider_ref        VARCHAR(150),
   account_number      VARCHAR(10) NOT NULL,
   bank_name           VARCHAR(100) NOT NULL,
+  -- The tx_ref used when this virtual account was created (e.g.
+  -- "OP-VA-<userId>"). Flutterwave's charge.completed webhook for a
+  -- deposit into a static/permanent virtual account does NOT reliably
+  -- include the account_number — it only reliably includes tx_ref and an
+  -- internal account_id. Storing tx_ref here lets webhook.routes.js match
+  -- an incoming deposit back to the correct wallet even when account_number
+  -- is absent from the payload.
+  tx_ref              VARCHAR(150),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- schema.sql is re-applied in full on every deploy (see db/migrate.js), even
+-- against an already-existing database — so CREATE TABLE IF NOT EXISTS above
+-- is a no-op on any database that already had virtual_accounts before this
+-- column was added. This ALTER TABLE is what actually adds it in that case,
+-- and must run before the CREATE INDEX below, or that fails with
+-- "column tx_ref does not exist".
+ALTER TABLE virtual_accounts ADD COLUMN IF NOT EXISTS tx_ref VARCHAR(150);
+CREATE INDEX IF NOT EXISTS idx_virtual_accounts_tx_ref ON virtual_accounts(tx_ref);
 
 -- ---------------------------------------------------------------------------
 -- DEVICES / SESSIONS (used to determine online/offline + refresh tokens)

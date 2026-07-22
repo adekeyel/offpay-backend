@@ -102,6 +102,17 @@ async function getWalletSummary(userId) {
   const offlineLimit = Math.round(balance * (env.offline.availablePercent / 100) * 100) / 100;
   const lockedIfOffline = Math.round((balance - offlineLimit) * 100) / 100;
 
+  // The bank-assigned NUBAN is opened in the user's own name (matched
+  // against their BVN at KYC approval — see adminKyc.controller.js), so the
+  // "Account Name" shown on the Add Money screen should be the account
+  // holder's real name, not the literal string "OffPay". Bank name gets the
+  // "OffPay" brand appended for display purposes only — the raw
+  // wallet.virtual_bank value (used for reconciliation/matching elsewhere)
+  // is left untouched.
+  const { rows: userRows } = await query('SELECT full_name FROM users WHERE id = $1', [userId]);
+  const accountName = userRows[0]?.full_name || null;
+  const bankName = wallet.virtual_bank ? `${wallet.virtual_bank} (OffPay)` : wallet.virtual_bank;
+
   const { rows: activeTokens } = await query(
     `SELECT * FROM offline_tokens WHERE wallet_id = $1 AND status = 'active' AND expires_at > now() ORDER BY issued_at DESC LIMIT 1`,
     [wallet.id]
@@ -120,7 +131,8 @@ async function getWalletSummary(userId) {
   return {
     walletId: wallet.wallet_id,
     accountNumber: wallet.virtual_account,
-    bankName: wallet.virtual_bank,
+    accountName,
+    bankName,
     balance,
     confirmed: balance,
     pending,
