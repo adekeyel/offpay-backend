@@ -1,15 +1,26 @@
 const { query } = require('../config/db');
 const ApiError = require('../utils/ApiError');
 
-/** Lists notifications visible to the current admin's role (or broadcast to everyone), with a read flag. */
+/**
+ * Lists notifications visible to the current admin.
+ * Super-admin ('admin' role) sees every notification regardless of
+ * target_role — this used to filter on `target_role IS NULL OR target_role =
+ * role`, which for an 'admin' role meant only rows scoped to null/'admin'
+ * ever showed up. Every real trigger (new support message, tier upgrade
+ * request, fraud alert, new registration) scopes targetRole to
+ * 'support'/'compliance'/'fraud' instead, so super-admin's feed was always
+ * empty of exactly the alerts that matter, even though the email side
+ * already reached them correctly (see notify.service.js).
+ */
 async function list(req, res) {
+  const isSuperAdmin = req.admin.role === 'admin';
   const { rows } = await query(
     `SELECT n.*, (nr.admin_id IS NOT NULL) AS is_read
      FROM notifications n
      LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.admin_id = $1
-     WHERE n.target_role IS NULL OR n.target_role = $2
+     WHERE $2 OR n.target_role IS NULL OR n.target_role = $3
      ORDER BY n.created_at DESC LIMIT 100`,
-    [req.admin.id, req.admin.role]
+    [req.admin.id, isSuperAdmin, req.admin.role]
   );
   res.json({ success: true, data: rows });
 }

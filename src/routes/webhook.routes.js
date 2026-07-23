@@ -106,8 +106,17 @@ router.post('/flutterwave', asyncHandler(async (req, res) => {
             walletId: wallet.id, amount: grossAmount - fee, fee, type: 'deposit_external', provider: 'flutterwave',
             providerReference: txRef,
             counterparty: {
-              name: originator.originatorname || event.data.customer?.name || null,
-              bank: originator.bankname || event.data.customer?.bank || null,
+              // IMPORTANT: never fall back to event.data.customer here — that
+              // object is the virtual account's own owner (the OffPay user
+              // being credited), not who sent the money. A previous version
+              // of this code fell back to event.data.customer?.name/bank
+              // whenever meta_data lacked an originator, which meant every
+              // deposit missing that field showed the RECEIVER'S OWN NAME as
+              // the sender on their own receipt. If meta_data genuinely has
+              // no originator info, leave these null (shown as "Unknown
+              // sender" in the app) rather than guessing wrong.
+              name: originator.originatorname || null,
+              bank: originator.bankname || null,
               number: originator.originatoraccountnumber || null,
             },
             narration: senderNarration || 'Inbound bank transfer',
