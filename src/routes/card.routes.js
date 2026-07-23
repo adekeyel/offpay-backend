@@ -8,5 +8,6 @@ router.use(requireUserAuth);
 router.get('/mine', asyncHandler(ctrl.getMyCard));
 router.post('/', requireApprovedKyc, asyncHandler(ctrl.createCard));
 router.post('/:id/status', asyncHandler(ctrl.updateStatus));
+router.delete('/:id', asyncHandler(ctrl.deleteCard));
 
 module.exports = router;

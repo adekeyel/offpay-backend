@@ -5,7 +5,10 @@ const providerManager = require('../services/providers/providerManager');
 const { decrypt } = require('../utils/encryption');
 
 async function getMyCard(req, res) {
-  const { rows } = await query('SELECT * FROM cards WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [req.user.id]);
+  const { rows } = await query(
+    `SELECT * FROM cards WHERE user_id = $1 AND status != 'deleted' ORDER BY created_at DESC LIMIT 1`,
+    [req.user.id]
+  );
   res.json({ success: true, data: rows[0] || null });
 }
 
@@ -19,7 +22,7 @@ async function getMyCard(req, res) {
  * we don't issue a card for an unverified user.
  */
 async function createCard(req, res) {
-  const { rows: existing } = await query(`SELECT 1 FROM cards WHERE user_id = $1 AND status != 'expired'`, [req.user.id]);
+  const { rows: existing } = await query(`SELECT 1 FROM cards WHERE user_id = $1 AND status NOT IN ('expired', 'deleted')`, [req.user.id]);
   if (existing.length) throw ApiError.badRequest('You already have an active virtual card.');
 
   const { rows: userRows } = await query('SELECT full_name, email, bvn_encrypted, kyc_status FROM users WHERE id = $1', [req.user.id]);
@@ -82,4 +85,20 @@ async function updateStatus(req, res) {
   res.json({ success: true, data: updated[0] });
 }
 
-module.exports = { getMyCard, createCard, updateStatus };
+/**
+ * Soft-deletes the card: sets status = 'deleted' rather than removing the
+ * row, so any transactions/audit history tied to it stay intact. Excluded
+ * from getMyCard() and from the "already have a card" check on createCard()
+ * above, so the user can immediately request a fresh card afterward.
+ */
+async function deleteCard(req, res) {
+  const { rows } = await query('SELECT * FROM cards WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+  if (!rows.length) throw ApiError.notFound('Card not found.');
+  if (rows[0].status === 'deleted') throw ApiError.badRequest('This card has already been deleted.');
+
+  await query('UPDATE cards SET status = $1, updated_at = now() WHERE id = $2', ['deleted', req.params.id]);
+  await auditService.logAction({ actorType: 'user', actorId: req.user.id, action: 'CARD_DELETED', targetType: 'card', targetId: req.params.id, ipAddress: req.ip });
+  res.json({ success: true, message: 'Card deleted.' });
+}
+
+module.exports = { getMyCard, createCard, updateStatus, deleteCard };
