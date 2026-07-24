@@ -9,6 +9,7 @@ const { generateWalletId, generateVirtualAccountNumber } = require('../utils/idG
 const auditService = require('../services/audit.service');
 const { notifyUser, notifyAdmins } = require('../services/notify.service');
 const { encrypt, blindIndex } = require('../utils/encryption');
+const logger = require('../utils/logger');
 
 /**
  * Registration collects everything required to open a fintech wallet in
@@ -58,43 +59,79 @@ async function register(req, res) {
 
   // BVN is deliberately NOT a hard one-account-per-person rule: someone may
   // hold more than one OffPay account under the same BVN, but only once
-  // every existing account under that BVN has been fully verified to Tier 3.
-  // This stops someone stacking several low-KYC wallets under one identity
-  // while still allowing legitimate multi-wallet use once each one has been
-  // through full KYC. Deleted accounts don't count toward this check.
+  // every existing account under that BVN has been fully verified to Tier 3,
+  // and never more than MAX_ACCOUNTS_PER_BVN total. This stops someone
+  // stacking several low-KYC wallets under one identity while still
+  // allowing legitimate multi-wallet use once each one has been through
+  // full KYC. Deleted accounts don't count toward either check.
+  const MAX_ACCOUNTS_PER_BVN = 4;
   const { rows: bvnAccounts } = await query(
     `SELECT id, kyc_tier FROM users WHERE bvn_hash = $1 AND status != 'deleted'`,
     [bvnHash]
   );
   if (bvnAccounts.length) {
+    if (bvnAccounts.length >= MAX_ACCOUNTS_PER_BVN) {
+      throw ApiError.conflict(
+        `You already have the maximum of ${MAX_ACCOUNTS_PER_BVN} OffPay accounts registered under this BVN. Please contact support if you need help.`
+      );
+    }
     const belowTierThree = bvnAccounts.find((u) => u.kyc_tier < 3);
     if (belowTierThree) {
       throw ApiError.conflict(
         'You already have an OffPay account registered with this BVN that has not reached Tier 3 yet. Please upgrade that account to Tier 3 before opening another one, or contact support if you need help.'
       );
     }
-    // Every existing account under this BVN is already Tier 3 — allow a new one.
+    // Every existing account under this BVN is already Tier 3, and under
+    // the cap — allow a new one.
   }
 
   const passwordHash = await bcrypt.hash(password, env.security.bcryptSaltRounds);
 
-  const user = await withTransaction(async (client) => {
-    const { rows } = await client.query(
-      `INSERT INTO users (full_name, email, phone, bvn_encrypted, bvn_hash, passport_url, password_hash, date_of_birth, sex)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, full_name, email, phone, status, kyc_status`,
-      [fullName, email, phone, encrypt(bvn), bvnHash, passportUrl, passwordHash, dateOfBirth, String(sex).toLowerCase()]
-    );
-    const newUser = rows[0];
+  // The SELECT check above only rules out a duplicate at the moment it ran —
+  // it does NOT guarantee the INSERT below can't still collide. Two known
+  // ways that happens in production even though the check above looks
+  // right: (a) a genuine race — two requests for the same email pass the
+  // SELECT within milliseconds of each other before either has inserted;
+  // (b) an environment where a pre-migration-003 hard UNIQUE constraint on
+  // email/phone is still sitting on the users table (e.g. a deploy where
+  // db/migrations/003_reactivatable_identity_fields.sql never actually ran
+  // against this database), so even a genuinely deleted account's old row
+  // still blocks reuse at the DB level even though our own SELECT correctly
+  // excluded it. Either way, without this catch the person sees a raw
+  // "Something went wrong" 500 instead of a clear, actionable message — and
+  // case (b) especially is very easy to mistake for "the fix isn't working"
+  // when the real problem is that the migration hasn't run. Logging loudly
+  // here means that's diagnosable from Railway logs instead of guesswork.
+  let user;
+  try {
+    user = await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO users (full_name, email, phone, bvn_encrypted, bvn_hash, passport_url, password_hash, date_of_birth, sex)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, full_name, email, phone, status, kyc_status`,
+        [fullName, email, phone, encrypt(bvn), bvnHash, passportUrl, passwordHash, dateOfBirth, String(sex).toLowerCase()]
+      );
+      const newUser = rows[0];
 
-    // Wallet is created immediately but stays unusable for money movement
-    // until KYC is approved — see middleware/auth.js requireApprovedKyc.
-    await client.query(
-      `INSERT INTO wallets (user_id, wallet_id) VALUES ($1,$2)`,
-      [newUser.id, generateWalletId()]
-    );
+      // Wallet is created immediately but stays unusable for money movement
+      // until KYC is approved — see middleware/auth.js requireApprovedKyc.
+      await client.query(
+        `INSERT INTO wallets (user_id, wallet_id) VALUES ($1,$2)`,
+        [newUser.id, generateWalletId()]
+      );
 
-    return newUser;
-  });
+      return newUser;
+    });
+  } catch (err) {
+    if (err.code === '23505') {
+      logger.error(
+        `Register insert hit a DB-level unique violation for email=${email} phone=${phone} even though the app-level duplicate check passed. ` +
+        `If this keeps happening, check whether db/migrations/003_reactivatable_identity_fields.sql has actually been applied to this database ` +
+        `(a leftover hard UNIQUE constraint on users.email/phone from before that migration would cause exactly this). Constraint: ${err.constraint}`
+      );
+      throw ApiError.conflict('An account already exists with this email or phone number.');
+    }
+    throw err;
+  }
 
   await otpService.issueOtp({ userId: user.id, destination: email, channel: 'email', purpose: 'register' });
   await auditService.logAction({ actorType: 'user', actorId: user.id, action: 'REGISTER', targetType: 'user', targetId: user.id, ipAddress: req.ip });

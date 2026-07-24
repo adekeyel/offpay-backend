@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const asyncHandler = require('../utils/asyncHandler');
 const { requireAdminAuth, requireRole } = require('../middleware/auth');
-const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
+const { adminAuthLimiter, otpLimiter } = require('../middleware/rateLimiter');
 
 const authCtrl = require('../controllers/adminAuth.controller');
 const kycCtrl = require('../controllers/adminKyc.controller');
@@ -25,7 +25,7 @@ const productsCtrl = require('../controllers/adminProducts.controller');
 const { adUpload, persistAdUpload } = require('../middleware/adUpload');
 
 // ---- Public admin auth ----
-router.post('/auth/login', authLimiter, asyncHandler(authCtrl.login));
+router.post('/auth/login', adminAuthLimiter, asyncHandler(authCtrl.login));
 router.post('/auth/verify-otp', otpLimiter, asyncHandler(authCtrl.verifyOtp));
 
 // ---- Everything below requires a valid admin session ----
