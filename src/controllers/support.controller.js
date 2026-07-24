@@ -134,4 +134,97 @@ async function replyTicket(req, res) {
   res.json({ success: true, message: 'Reply sent.' });
 }
 
-module.exports = { createTicket, myTickets, getTicketThread, userReply, listAllTickets, getTicketThreadAdmin, replyTicket };
+// --- help-center content (topics + FAQs) ---
+
+/** Public/user-facing: only active tiles, in display order. */
+async function listTopics(req, res) {
+  const { rows } = await query(`SELECT * FROM support_topics WHERE active = true ORDER BY sort_order ASC, created_at ASC`);
+  res.json({ success: true, data: rows });
+}
+
+/** Public/user-facing: only active FAQs, grouped by category in the shape the app renders tabs from. */
+async function listFaqs(req, res) {
+  const { rows } = await query(`SELECT * FROM support_faqs WHERE active = true ORDER BY category ASC, sort_order ASC, created_at ASC`);
+  const grouped = {};
+  for (const row of rows) {
+    if (!grouped[row.category]) grouped[row.category] = [];
+    grouped[row.category].push(row);
+  }
+  res.json({ success: true, data: grouped });
+}
+
+// --- admin CRUD (support/admin roles) ---
+
+async function adminListTopics(req, res) {
+  const { rows } = await query(`SELECT * FROM support_topics ORDER BY sort_order ASC, created_at ASC`);
+  res.json({ success: true, data: rows });
+}
+
+async function adminCreateTopic(req, res) {
+  const { icon, label, prefillSubject, prefillMessage, sortOrder } = req.body;
+  if (!label) throw ApiError.badRequest('Label is required.');
+  const { rows } = await query(
+    `INSERT INTO support_topics (icon, label, prefill_subject, prefill_message, sort_order) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [icon || '❓', label, prefillSubject || null, prefillMessage || null, sortOrder ?? 0]
+  );
+  res.status(201).json({ success: true, data: rows[0] });
+}
+
+async function adminUpdateTopic(req, res) {
+  const { icon, label, prefillSubject, prefillMessage, sortOrder, active } = req.body;
+  const { rows } = await query(
+    `UPDATE support_topics SET
+       icon = COALESCE($1, icon), label = COALESCE($2, label), prefill_subject = COALESCE($3, prefill_subject),
+       prefill_message = COALESCE($4, prefill_message), sort_order = COALESCE($5, sort_order),
+       active = COALESCE($6, active), updated_at = now()
+     WHERE id = $7 RETURNING *`,
+    [icon, label, prefillSubject, prefillMessage, sortOrder, active, req.params.id]
+  );
+  if (!rows.length) throw ApiError.notFound('Topic not found.');
+  res.json({ success: true, data: rows[0] });
+}
+
+async function adminDeleteTopic(req, res) {
+  await query(`DELETE FROM support_topics WHERE id = $1`, [req.params.id]);
+  res.json({ success: true, message: 'Topic deleted.' });
+}
+
+async function adminListFaqs(req, res) {
+  const { rows } = await query(`SELECT * FROM support_faqs ORDER BY category ASC, sort_order ASC, created_at ASC`);
+  res.json({ success: true, data: rows });
+}
+
+async function adminCreateFaq(req, res) {
+  const { category, question, answer, sortOrder } = req.body;
+  if (!question || !answer) throw ApiError.badRequest('Question and answer are required.');
+  const { rows } = await query(
+    `INSERT INTO support_faqs (category, question, answer, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [category || 'General', question, answer, sortOrder ?? 0]
+  );
+  res.status(201).json({ success: true, data: rows[0] });
+}
+
+async function adminUpdateFaq(req, res) {
+  const { category, question, answer, sortOrder, active } = req.body;
+  const { rows } = await query(
+    `UPDATE support_faqs SET
+       category = COALESCE($1, category), question = COALESCE($2, question), answer = COALESCE($3, answer),
+       sort_order = COALESCE($4, sort_order), active = COALESCE($5, active), updated_at = now()
+     WHERE id = $6 RETURNING *`,
+    [category, question, answer, sortOrder, active, req.params.id]
+  );
+  if (!rows.length) throw ApiError.notFound('FAQ not found.');
+  res.json({ success: true, data: rows[0] });
+}
+
+async function adminDeleteFaq(req, res) {
+  await query(`DELETE FROM support_faqs WHERE id = $1`, [req.params.id]);
+  res.json({ success: true, message: 'FAQ deleted.' });
+}
+
+module.exports = {
+  createTicket, myTickets, getTicketThread, userReply, listAllTickets, getTicketThreadAdmin, replyTicket,
+  listTopics, listFaqs,
+  adminListTopics, adminCreateTopic, adminUpdateTopic, adminDeleteTopic,
+  adminListFaqs, adminCreateFaq, adminUpdateFaq, adminDeleteFaq,
+};

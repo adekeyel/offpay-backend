@@ -435,6 +435,33 @@ CREATE TABLE IF NOT EXISTS support_replies (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Admin-editable help-center content — category tiles + FAQ list on the
+-- Support page. See db/migrations/007_support_content.sql for details.
+CREATE TABLE IF NOT EXISTS support_topics (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  icon             VARCHAR(10) NOT NULL DEFAULT '❓',
+  label            VARCHAR(60) NOT NULL,
+  prefill_subject  VARCHAR(200),
+  prefill_message  TEXT,
+  sort_order       INT NOT NULL DEFAULT 0,
+  active           BOOLEAN NOT NULL DEFAULT true,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS support_faqs (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category     VARCHAR(60) NOT NULL DEFAULT 'General',
+  question     VARCHAR(300) NOT NULL,
+  answer       TEXT NOT NULL,
+  sort_order   INT NOT NULL DEFAULT 0,
+  active       BOOLEAN NOT NULL DEFAULT true,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_faqs_category ON support_faqs(category);
+
 -- ---------------------------------------------------------------------------
 -- FRAUD MONITORING
 -- ---------------------------------------------------------------------------

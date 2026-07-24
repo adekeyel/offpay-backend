@@ -98,6 +98,20 @@ router.get('/support/tickets', requireRole('support'), asyncHandler(supportCtrl.
 router.get('/support/tickets/:id', requireRole('support'), asyncHandler(supportCtrl.getTicketThreadAdmin));
 router.post('/support/tickets/:id/reply', requireRole('support'), asyncHandler(supportCtrl.replyTicket));
 
+// Help-center content (category tiles + FAQs shown on the app's Support
+// page). Any support/admin staff can view for review purposes; only
+// super-admin can create/edit/delete, matching the fee-config and
+// broadcast-to-users pattern elsewhere in this file.
+router.get('/support/topics', requireRole('support'), asyncHandler(supportCtrl.adminListTopics));
+router.post('/support/topics', requireRole(), asyncHandler(supportCtrl.adminCreateTopic));
+router.put('/support/topics/:id', requireRole(), asyncHandler(supportCtrl.adminUpdateTopic));
+router.delete('/support/topics/:id', requireRole(), asyncHandler(supportCtrl.adminDeleteTopic));
+
+router.get('/support/faqs', requireRole('support'), asyncHandler(supportCtrl.adminListFaqs));
+router.post('/support/faqs', requireRole(), asyncHandler(supportCtrl.adminCreateFaq));
+router.put('/support/faqs/:id', requireRole(), asyncHandler(supportCtrl.adminUpdateFaq));
+router.delete('/support/faqs/:id', requireRole(), asyncHandler(supportCtrl.adminDeleteFaq));
+
 // Internal notifications — everyone can read/mark-read, only super-admin can broadcast
 router.get('/notifications', asyncHandler(notificationsCtrl.list));
 router.post('/notifications/:id/read', asyncHandler(notificationsCtrl.markRead));
