@@ -3,6 +3,9 @@ const ApiError = require('../utils/ApiError');
 const auditService = require('../services/audit.service');
 const { decrypt, maskLast4 } = require('../utils/encryption');
 const walletService = require('../services/wallet.service');
+const otpService = require('../services/otp.service');
+const mailer = require('../services/mailer.service');
+const { notifyUser } = require('../services/notify.service');
 
 const FILTER_MAP = {
   all: null,
@@ -108,31 +111,52 @@ async function applyAction(req, res) {
   res.json({ success: true, message: `Account ${action}ed successfully.` });
 }
 
-/** Reverses a previous block/freeze/suspend/delete action, restoring prior state. */
+/**
+ * Reverses a previous block/freeze/suspend/delete action, restoring prior state.
+ * For 'delete', pass { force: true } in the body to restore the account even
+ * though its email or BVN is now also in use by a newer account (both are
+ * allowed to collide by design — see auth.controller.js register() — so an
+ * admin can deliberately restore into that state). A genuine phone conflict
+ * is never bypassed, since phone stays a hard one-account rule.
+ */
 async function reverseAction(req, res) {
+  const { force } = req.body || {};
   const { rows } = await query('SELECT * FROM account_actions WHERE id = $1', [req.params.actionId]);
   if (!rows.length) throw ApiError.notFound('Action not found.');
   const actionRecord = rows[0];
   if (actionRecord.reversed) throw ApiError.conflict('This action has already been reversed.');
   if (actionRecord.action === 'reverse') throw ApiError.badRequest('Cannot reverse a reversal — this is a permanent ledger correction.');
 
+  let restoredWithConflict = false;
   await withTransaction(async (client) => {
     if (actionRecord.action === 'freeze') {
       await client.query('UPDATE wallets SET is_frozen = false WHERE user_id = $1', [actionRecord.user_id]);
     } else {
       if (actionRecord.action === 'delete') {
         // Someone may have registered a brand-new account reusing this
-        // person's email/phone since the account was deleted (that's the
-        // whole point of freeing them up) — restoring the old deleted row
-        // to 'active' would then collide with that newer account.
-        const { rows: userRows } = await client.query('SELECT email, phone FROM users WHERE id = $1', [actionRecord.user_id]);
-        const { email, phone } = userRows[0];
-        const { rows: conflicts } = await client.query(
-          `SELECT id FROM users WHERE (email = $1 OR phone = $2) AND status != 'deleted' AND id != $3`,
-          [email, phone, actionRecord.user_id]
+        // person's email/phone/BVN since the account was deleted (that's
+        // the whole point of freeing them up) — restoring the old deleted
+        // row to 'active' would then land it alongside that newer account.
+        const { rows: userRows } = await client.query('SELECT email, phone, bvn_hash FROM users WHERE id = $1', [actionRecord.user_id]);
+        const { email, phone, bvn_hash } = userRows[0];
+
+        const { rows: phoneConflicts } = await client.query(
+          `SELECT id FROM users WHERE phone = $1 AND status != 'deleted' AND id != $2`,
+          [phone, actionRecord.user_id]
         );
-        if (conflicts.length) {
-          throw ApiError.conflict('Cannot restore this account — its email or phone number is already in use by a newer account.');
+        if (phoneConflicts.length) {
+          throw ApiError.conflict('Cannot restore this account — its phone number is already in use by a newer account.');
+        }
+
+        const { rows: identityConflicts } = await client.query(
+          `SELECT id FROM users WHERE (email = $1 OR bvn_hash = $2) AND status != 'deleted' AND id != $3`,
+          [email, bvn_hash, actionRecord.user_id]
+        );
+        if (identityConflicts.length) {
+          if (!force) {
+            throw ApiError.conflict('This account\'s email or BVN is already in use by another account. Pass force to restore it anyway.');
+          }
+          restoredWithConflict = true;
         }
       }
       await client.query(`UPDATE users SET status = 'active' WHERE id = $1`, [actionRecord.user_id]);
@@ -140,8 +164,117 @@ async function reverseAction(req, res) {
     await client.query('UPDATE account_actions SET reversed = true, reversed_by = $1, reversed_at = now() WHERE id = $2', [req.admin.id, actionRecord.id]);
   });
 
-  await auditService.logAction({ actorType: 'admin', actorId: req.admin.id, action: 'ACCOUNT_ACTION_REVERSED', targetType: 'account_action', targetId: actionRecord.id });
-  res.json({ success: true, message: 'Account restored to its previous state.' });
+  await auditService.logAction({
+    actorType: 'admin', actorId: req.admin.id, action: 'ACCOUNT_ACTION_REVERSED',
+    targetType: 'account_action', targetId: actionRecord.id, meta: { restoredWithConflict },
+  });
+  res.json({
+    success: true,
+    message: restoredWithConflict
+      ? 'Account restored despite a matching email/BVN on another account.'
+      : 'Account restored to its previous state.',
+  });
+}
+
+/** Admin-initiated email change. Blocked only if the new email is already used by a DIFFERENT identity (different BVN) — reusing it under the same BVN follows the same allowance as registration. */
+async function updateEmail(req, res) {
+  const { email, reason } = req.body;
+  if (!email) throw ApiError.badRequest('email is required.');
+  if (!/^\S+@\S+\.\S+$/.test(email)) throw ApiError.badRequest('Enter a valid email address.');
+
+  const { rows } = await query('SELECT * FROM users WHERE id = $1', [req.params.id]);
+  if (!rows.length) throw ApiError.notFound('User not found.');
+  const user = rows[0];
+
+  const { rows: matches } = await query(
+    `SELECT id, bvn_hash FROM users WHERE email = $1 AND status != 'deleted' AND id != $2`,
+    [email, user.id]
+  );
+  if (matches.some((u) => u.bvn_hash !== user.bvn_hash)) {
+    throw ApiError.conflict('This email address is already in use by a different account.');
+  }
+
+  const oldEmail = user.email;
+  await query('UPDATE users SET email = $1, updated_at = now() WHERE id = $2', [email, user.id]);
+  await auditService.logAction({
+    actorType: 'admin', actorId: req.admin.id, action: 'ADMIN_EMAIL_CHANGE',
+    targetType: 'user', targetId: user.id, meta: { from: oldEmail, to: email, reason: reason || null },
+  });
+  res.json({ success: true, message: 'Email address updated.', data: { email } });
+}
+
+/** Clears lockouts/failed-login state and revokes every session, forcing a fresh login everywhere. */
+async function resetAccount(req, res) {
+  const { reason } = req.body;
+  const { rows } = await query('SELECT id FROM users WHERE id = $1', [req.params.id]);
+  if (!rows.length) throw ApiError.notFound('User not found.');
+
+  await withTransaction(async (client) => {
+    await client.query('UPDATE users SET failed_login_count = 0, locked_until = NULL, updated_at = now() WHERE id = $1', [req.params.id]);
+    await client.query('UPDATE sessions SET revoked = true, is_online = false WHERE user_id = $1 AND revoked = false', [req.params.id]);
+  });
+
+  await auditService.logAction({ actorType: 'admin', actorId: req.admin.id, action: 'ADMIN_ACCOUNT_RESET', targetType: 'user', targetId: req.params.id, meta: { reason: reason || null } });
+  res.json({ success: true, message: 'Account reset — lockouts cleared and every session signed out.' });
+}
+
+/** Marks the account's email as unverified again and sends a fresh verification OTP. */
+async function resetEmail(req, res) {
+  const { reason } = req.body;
+  const { rows } = await query('SELECT id, email, full_name FROM users WHERE id = $1', [req.params.id]);
+  if (!rows.length) throw ApiError.notFound('User not found.');
+  const user = rows[0];
+
+  await query('UPDATE users SET is_email_verified = false, updated_at = now() WHERE id = $1', [user.id]);
+  await otpService.issueOtp({ userId: user.id, destination: user.email, channel: 'email', purpose: 'register' });
+
+  await auditService.logAction({ actorType: 'admin', actorId: req.admin.id, action: 'ADMIN_EMAIL_RESET', targetType: 'user', targetId: user.id, meta: { reason: reason || null } });
+  res.json({ success: true, message: 'Email marked unverified and a new verification code was sent.' });
+}
+
+/** Clears a user's stored address (e.g. to let them resubmit during a tier upgrade). */
+async function clearAddress(req, res) {
+  const { reason } = req.body;
+  const { rows } = await query('SELECT id FROM users WHERE id = $1', [req.params.id]);
+  if (!rows.length) throw ApiError.notFound('User not found.');
+
+  await query('UPDATE users SET address = NULL, address_updated_at = NULL, updated_at = now() WHERE id = $1', [req.params.id]);
+  await auditService.logAction({ actorType: 'admin', actorId: req.admin.id, action: 'ADMIN_ADDRESS_CLEAR', targetType: 'user', targetId: req.params.id, meta: { reason: reason || null } });
+  res.json({ success: true, message: 'Address cleared.' });
+}
+
+/**
+ * Lowers a user's KYC tier by one (or to a specific { tier } passed in the
+ * body), the reverse of adminKyc.controller.js's approveTierUpgrade. Floors
+ * at Tier 1 — every account keeps at least the signup-default level of
+ * verification.
+ */
+async function downgradeTier(req, res) {
+  const { reason, tier } = req.body;
+  if (!reason) throw ApiError.badRequest('A reason is required to downgrade a user\'s tier.');
+
+  const { rows } = await query('SELECT * FROM users WHERE id = $1', [req.params.id]);
+  if (!rows.length) throw ApiError.notFound('User not found.');
+  const user = rows[0];
+
+  const requestedTier = tier ? parseInt(tier, 10) : user.kyc_tier - 1;
+  const newTier = Math.max(1, Math.min(user.kyc_tier, requestedTier || user.kyc_tier - 1));
+  if (newTier >= user.kyc_tier) throw ApiError.badRequest('The new tier must be lower than the user\'s current tier.');
+
+  await query(
+    `UPDATE users SET kyc_tier = $1, tier_upgrade_status = NULL, tier_upgrade_notes = NULL, updated_at = now() WHERE id = $2`,
+    [newTier, user.id]
+  );
+
+  await auditService.logAction({ actorType: 'admin', actorId: req.admin.id, action: 'ADMIN_TIER_DOWNGRADE', targetType: 'user', targetId: user.id, meta: { from: user.kyc_tier, to: newTier, reason } });
+  await mailer.sendGenericEmail(user.email, 'Your OffPay verification tier has changed',
+    `Hi ${user.full_name}, your account's KYC tier has been changed to Tier ${newTier}. Contact support if you have questions.`);
+  await notifyUser({
+    userId: user.id, type: 'app', title: `Moved to Tier ${newTier}`,
+    message: `Your account's KYC tier has been changed to Tier ${newTier}.`,
+  });
+
+  res.json({ success: true, message: `User downgraded to Tier ${newTier}.`, data: { kycTier: newTier } });
 }
 
 /** Reverses a specific transaction (refunds the sender, debits the recipient if funds are still available). Finance/admin only. */
@@ -181,4 +314,7 @@ async function reverseTransaction(req, res) {
   res.json({ success: true, message: 'Transaction reversed.', data: { newReference: reversal.reference } });
 }
 
-module.exports = { listUsers, getUserDetail, applyAction, reverseAction, reverseTransaction };
+module.exports = {
+  listUsers, getUserDetail, applyAction, reverseAction, reverseTransaction,
+  updateEmail, resetAccount, resetEmail, clearAddress, downgradeTier,
+};

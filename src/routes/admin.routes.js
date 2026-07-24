@@ -51,6 +51,11 @@ router.get('/users', requireRole('support', 'compliance', 'finance', 'operations
 router.get('/users/:id', requireRole('support', 'compliance', 'finance', 'operations', 'fraud', 'recovery'), asyncHandler(accountsCtrl.getUserDetail));
 router.post('/users/:id/actions/:action', requireRole('compliance'), asyncHandler(accountsCtrl.applyAction));
 router.post('/users/:id/actions/:actionId/reverse', requireRole('compliance'), asyncHandler(accountsCtrl.reverseAction));
+router.patch('/users/:id/email', requireRole('compliance'), asyncHandler(accountsCtrl.updateEmail));
+router.post('/users/:id/reset', requireRole('compliance'), asyncHandler(accountsCtrl.resetAccount));
+router.post('/users/:id/reset-email', requireRole('compliance'), asyncHandler(accountsCtrl.resetEmail));
+router.post('/users/:id/clear-address', requireRole('compliance'), asyncHandler(accountsCtrl.clearAddress));
+router.post('/users/:id/downgrade', requireRole('compliance'), asyncHandler(accountsCtrl.downgradeTier));
 
 // Transactions — finance, fraud, compliance, admin
 router.get('/transactions', requireRole('finance', 'fraud', 'compliance', 'support'), asyncHandler(txnCtrl.list));

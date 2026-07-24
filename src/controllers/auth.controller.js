@@ -49,40 +49,67 @@ async function register(req, res) {
   // Deleted accounts must never block a new registration — their email/phone
   // are free to reuse the moment the account is deleted (see schema.sql's
   // partial unique indexes, which enforce this same rule at the DB level).
-  const existing = await query(
-    `SELECT id FROM users WHERE (email = $1 OR phone = $2) AND status != 'deleted'`,
-    [email, phone]
+  //
+  // Phone stays a hard one-account rule — it isn't part of the multi-account
+  // allowance below, since a phone number maps to one SIM/device rather than
+  // an identity that can legitimately open several wallets the way
+  // email+BVN can (see db/migrations/009_relax_email_uniqueness.sql).
+  const { rows: phoneMatches } = await query(
+    `SELECT id FROM users WHERE phone = $1 AND status != 'deleted'`,
+    [phone]
   );
-  if (existing.rows.length) {
-    throw ApiError.conflict('An account already exists with this email or phone number.');
+  if (phoneMatches.length) {
+    throw ApiError.conflict('An account already exists with this phone number.');
   }
 
-  // BVN is deliberately NOT a hard one-account-per-person rule: someone may
-  // hold more than one OffPay account under the same BVN, but only once
-  // every existing account under that BVN has been fully verified to Tier 3,
-  // and never more than MAX_ACCOUNTS_PER_BVN total. This stops someone
-  // stacking several low-KYC wallets under one identity while still
-  // allowing legitimate multi-wallet use once each one has been through
-  // full KYC. Deleted accounts don't count toward either check.
-  const MAX_ACCOUNTS_PER_BVN = 4;
-  const { rows: bvnAccounts } = await query(
-    `SELECT id, kyc_tier FROM users WHERE bvn_hash = $1 AND status != 'deleted'`,
+  // Email and BVN together identify a *person*, not a single wallet. OffPay
+  // allows the same person (same email + same BVN) to hold more than one
+  // account — but only ONE of the two matching (e.g. someone else's email
+  // under a different BVN, or the same BVN resurfacing under a different
+  // email) is the suspicious case this still blocks outright.
+  const { rows: emailMatches } = await query(
+    `SELECT id, bvn_hash, kyc_tier FROM users WHERE email = $1 AND status != 'deleted'`,
+    [email]
+  );
+  const { rows: bvnMatches } = await query(
+    `SELECT id, email, kyc_tier FROM users WHERE bvn_hash = $1 AND status != 'deleted'`,
     [bvnHash]
   );
-  if (bvnAccounts.length) {
-    if (bvnAccounts.length >= MAX_ACCOUNTS_PER_BVN) {
+  if (emailMatches.some((u) => u.bvn_hash !== bvnHash)) {
+    throw ApiError.conflict('An account already exists with this email address.');
+  }
+  if (bvnMatches.some((u) => u.email !== email)) {
+    throw ApiError.conflict('An account already exists with this BVN under a different email address. Please contact support if this is you.');
+  }
+
+  // Same identity (same email AND same BVN) opening another wallet is
+  // allowed, subject to two limits: a hard cap on how many accounts one
+  // identity can stack up, and a rule that not every account under that
+  // identity may sit at the same KYC tier at once. A brand-new account
+  // always starts at the default tier (see users.kyc_tier's DEFAULT in
+  // schema.sql) — if every existing account under this identity is
+  // already parked at that same tier, this would just be a second
+  // undifferentiated wallet, so it's blocked. The moment at least one
+  // account has moved to a different tier, a fresh one is allowed
+  // alongside it, and the person can then choose which account (the new
+  // one or an existing one) to upgrade next.
+  const MAX_ACCOUNTS_PER_IDENTITY = 4;
+  const DEFAULT_KYC_TIER = 1;
+  const sameIdentityAccounts = emailMatches.filter((u) => u.bvn_hash === bvnHash);
+  if (sameIdentityAccounts.length) {
+    if (sameIdentityAccounts.length >= MAX_ACCOUNTS_PER_IDENTITY) {
       throw ApiError.conflict(
-        `You already have the maximum of ${MAX_ACCOUNTS_PER_BVN} OffPay accounts registered under this BVN. Please contact support if you need help.`
+        `You already have the maximum of ${MAX_ACCOUNTS_PER_IDENTITY} OffPay accounts registered under this email and BVN. Please contact support if you need help.`
       );
     }
-    const belowTierThree = bvnAccounts.find((u) => u.kyc_tier < 3);
-    if (belowTierThree) {
+    const allSameTier = sameIdentityAccounts.every((u) => u.kyc_tier === DEFAULT_KYC_TIER);
+    if (allSameTier) {
       throw ApiError.conflict(
-        'You already have an OffPay account registered with this BVN that has not reached Tier 3 yet. Please upgrade that account to Tier 3 before opening another one, or contact support if you need help.'
+        'You already have an OffPay account with this email and BVN at the same verification tier. Please upgrade that account to a different tier before opening another one, or contact support if you need help.'
       );
     }
-    // Every existing account under this BVN is already Tier 3, and under
-    // the cap — allow a new one.
+    // At least one existing account under this identity is at a different
+    // tier than a new signup would be — allow it.
   }
 
   const passwordHash = await bcrypt.hash(password, env.security.bcryptSaltRounds);
@@ -125,8 +152,9 @@ async function register(req, res) {
     if (err.code === '23505') {
       logger.error(
         `Register insert hit a DB-level unique violation for email=${email} phone=${phone} even though the app-level duplicate check passed. ` +
-        `If this keeps happening, check whether db/migrations/003_reactivatable_identity_fields.sql has actually been applied to this database ` +
-        `(a leftover hard UNIQUE constraint on users.email/phone from before that migration would cause exactly this). Constraint: ${err.constraint}`
+        `If this keeps happening, check whether db/migrations/003_reactivatable_identity_fields.sql and 009_relax_email_uniqueness.sql have actually ` +
+        `been applied to this database (a leftover hard/partial-unique constraint on users.email or users.phone from before those migrations would ` +
+        `cause exactly this). Constraint: ${err.constraint}`
       );
       throw ApiError.conflict('An account already exists with this email or phone number.');
     }

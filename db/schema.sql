@@ -120,11 +120,18 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
--- A deleted account's email/phone must never block someone from registering
--- again with the same details — these partial unique indexes only enforce
--- uniqueness among accounts that are NOT deleted.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique_active ON users(email) WHERE status != 'deleted';
+-- A deleted account's phone must never block someone from registering again
+-- with the same details — this partial unique index only enforces
+-- uniqueness among accounts that are NOT deleted. Phone stays a hard
+-- one-account rule (see auth.controller.js register()).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique_active ON users(phone) WHERE status != 'deleted';
+-- Email is intentionally NOT unique at the DB level (same pattern as
+-- bvn_hash below): one person may hold more than one OffPay account under
+-- the same email + BVN, subject to the tier-diversity rule enforced in
+-- application code (auth.controller.js register()). If this database was
+-- created before that rule existed, see
+-- db/migrations/009_relax_email_uniqueness.sql, which drops the old
+-- idx_users_email_unique_active constraint on upgrade.
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 CREATE INDEX IF NOT EXISTS idx_users_kyc_tier ON users(kyc_tier);
 
